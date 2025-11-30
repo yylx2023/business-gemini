@@ -487,6 +487,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions \
 - **[ddCat](https://linux.do/u/ddcat)** - 提供了 Gemini Enterprise 2 API 关键 JWT 加密 key 以及流程思路
   - [Gemini Enterprise 2api 关键jwt加密key以及流程](https://linux.do/t/topic/1223671)
   - [gemini business 2api简单版](https://linux.do/t/topic/1225005)
+- **[Gemini-Link-System](https://github.com/qxd-ljy/Gemini-Link-System)** - 一个将 Gemini Business API 转换为 OpenAI 兼容接口的网关服务
 
 本项目是在原项目基础上的二次开发和重构，感谢各位大佬提供的宝贵思路和代码！
 
