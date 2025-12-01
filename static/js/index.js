@@ -577,48 +577,88 @@
             }
         }
 
-        // 自动注册账号（创建临时邮箱 + 自动登录）
+        // 自动注册账号（创建临时邮箱 + 自动登录）- 支持批量注册
         async function autoRegisterAccount() {
             const btn = document.getElementById('autoRegisterBtn');
+            const countInput = document.getElementById('autoRegisterCount');
             const originalText = btn.innerHTML;
 
+            // 获取注册数量
+            let count = parseInt(countInput.value) || 1;
+            if (count < 1) count = 1;
+            if (count > 100) count = 100;
+            countInput.value = count;
+
             // 确认操作
-            if (!confirm('确定要自动注册新账号吗？\n\n这将：\n1. 创建一个随机临时邮箱\n2. 使用该邮箱自动登录 Gemini Business\n3. 保存账号信息\n\n注意：需要配置临时邮箱服务（TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）')) {
+            const confirmMsg = count === 1
+                ? '确定要自动注册新账号吗？\n\n这将：\n1. 创建一个随机临时邮箱\n2. 使用该邮箱自动登录 Gemini Business\n3. 保存账号信息\n\n注意：需要配置临时邮箱服务（TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）'
+                : `确定要批量注册 ${count} 个新账号吗？\n\n这将顺序执行：\n1. 创建随机临时邮箱\n2. 使用该邮箱自动登录 Gemini Business\n3. 保存账号信息\n\n每个账号注册成功后才会开始下一个。\n\n注意：需要配置临时邮箱服务（TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）`;
+
+            if (!confirm(confirmMsg)) {
                 return;
             }
 
+            // 禁用按钮和输入框
+            btn.disabled = true;
+            countInput.disabled = true;
+
+            let successCount = 0;
+            let failCount = 0;
+
             try {
-                // 禁用按钮，显示加载状态
-                btn.disabled = true;
-                btn.innerHTML = '<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 注册中...';
+                for (let i = 0; i < count; i++) {
+                    // 更新按钮状态显示进度
+                    btn.innerHTML = `<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 注册中 (${i + 1}/${count})...`;
 
-                showToast('正在创建临时邮箱...', 'info');
+                    showToast(`正在注册第 ${i + 1}/${count} 个账号...`, 'info');
 
-                const res = await apiFetch(`${API_BASE}/api/accounts/auto-register`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ headless: true })
-                });
+                    try {
+                        const res = await apiFetch(`${API_BASE}/api/accounts/auto-register`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ headless: true })
+                        });
 
-                const data = await res.json();
+                        const data = await res.json();
 
-                if (res.ok && data.success) {
-                    showToast(`账号注册成功！邮箱: ${data.email}`, 'success');
-                    loadAccounts();
-                } else {
-                    // 部分成功（邮箱创建成功但登录失败）
-                    if (data.id !== undefined) {
-                        showToast(`临时邮箱已创建，但登录失败: ${data.detail || data.error}`, 'warning');
-                        loadAccounts();
-                    } else {
-                        throw new Error(data.error || data.detail || '注册失败');
+                        if (res.ok && data.success) {
+                            successCount++;
+                            showToast(`第 ${i + 1}/${count} 个账号注册成功！邮箱: ${data.email}`, 'success');
+                            loadAccounts();
+                        } else {
+                            // 部分成功（邮箱创建成功但登录失败）
+                            if (data.id !== undefined) {
+                                failCount++;
+                                showToast(`第 ${i + 1}/${count} 个账号：临时邮箱已创建，但登录失败: ${data.detail || data.error}`, 'warning');
+                                loadAccounts();
+                            } else {
+                                failCount++;
+                                showToast(`第 ${i + 1}/${count} 个账号注册失败: ${data.error || data.detail || '未知错误'}`, 'error');
+                            }
+                        }
+                    } catch (e) {
+                        failCount++;
+                        showToast(`第 ${i + 1}/${count} 个账号注册失败: ${e.message}`, 'error');
+                    }
+
+                    // 如果还有下一个账号要注册，等待一小段时间
+                    if (i < count - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
-            } catch (e) {
-                showToast('自动注册失败: ' + e.message, 'error');
+
+                // 显示最终结果
+                if (count > 1) {
+                    if (failCount === 0) {
+                        showToast(`批量注册完成！成功注册 ${successCount} 个账号`, 'success');
+                    } else {
+                        showToast(`批量注册完成：成功 ${successCount} 个，失败 ${failCount} 个`, failCount > successCount ? 'error' : 'warning');
+                    }
+                }
             } finally {
-                // 恢复按钮状态
+                // 恢复按钮和输入框状态
                 btn.disabled = false;
+                countInput.disabled = false;
                 btn.innerHTML = originalText;
             }
         }

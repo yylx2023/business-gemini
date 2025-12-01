@@ -137,10 +137,15 @@
                             <svg class="icon"><use xlink:href="#icon-plus"></use></svg>
                             添加账号
                         </button>
-                        <button class="btn btn-success" onclick="autoRegisterAccount()" id="autoRegisterBtn">
-                            <svg class="icon"><use xlink:href="#icon-zap"></use></svg>
-                            自动注册账号
-                        </button>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="number" id="autoRegisterCount" value="1" min="1" max="100"
+                                   style="width: 60px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; text-align: center;"
+                                   title="自动注册账号数量">
+                            <button class="btn btn-success" onclick="autoRegisterAccount()" id="autoRegisterBtn">
+                                <svg class="icon"><use xlink:href="#icon-zap"></use></svg>
+                                自动注册账号
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="table-container">
