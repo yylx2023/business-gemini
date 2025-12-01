@@ -644,53 +644,32 @@ def get_image_base_url(fallback_host_url: str, account_manager=None, request=Non
     return configured_url
 
 
-def build_openai_response_content(chat_response: ChatResponse, host_url: str, account_manager=None, request=None):
+def build_openai_response_content(chat_response: ChatResponse, host_url: str, account_manager=None, request=None) -> str:
     """构建OpenAI格式的响应内容
-    
-    如果有图片/视频，返回数组格式：[{type: "text", text: "..."}, {type: "image_url", image_url: {url: "..."}}]
-    如果没有图片，返回纯文本字符串
-    
-    返回: str | List[Dict] - 纯文本或内容数组
+
+    如果有图片，只返回图片URL（不包含文本）
+    如果没有图片，返回纯文本
     """
-    result_text = chat_response.text
-    
-    # 如果有图片或视频，使用数组格式
+    # 如果有图片，只返回图片URL
     if chat_response.images:
         base_url = get_image_base_url(host_url, account_manager, request)
-        content_array = []
-        
-        # 如果有文本，先添加文本部分
-        if result_text and result_text.strip():
-            content_array.append({
-                "type": "text",
-                "text": result_text
-            })
-        
-        # 添加图片/视频部分
+        image_urls = []
+
         for img in chat_response.images:
             # 构建完整 URL
             if img.url:
-                media_url = img.url
+                image_urls.append(img.url)
             elif img.file_name:
                 # 本地缓存，构建本地 URL
                 if img.media_type == "video":
-                    media_url = f"{base_url}video/{img.file_name}"
+                    image_url = f"{base_url}video/{img.file_name}"
                 else:
-                    media_url = f"{base_url}image/{img.file_name}"
-            else:
-                continue  # 跳过没有 URL 的图片
-            
-            # 添加图片/视频对象
-            content_array.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": media_url
-                }
-            })
-        
-        # 如果只有图片没有文本，返回数组；如果有文本，也返回数组
-        return content_array if content_array else result_text
-    
-    # 没有图片，返回纯文本
-    return result_text
+                    image_url = f"{base_url}image/{img.file_name}"
+                image_urls.append(image_url)
+
+        if image_urls:
+            return "\n".join(image_urls)
+
+    # 没有图片，返回文本
+    return chat_response.text
 
