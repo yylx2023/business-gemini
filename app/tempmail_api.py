@@ -857,13 +857,15 @@ def get_verification_code_from_api(
 def create_temp_email(
     worker_domain: Optional[str] = None,
     admin_password: Optional[str] = None,
+    email_domain: Optional[str] = None,
     email_prefix: Optional[str] = None
 ) -> Optional[Dict]:
     """创建新的临时邮箱
 
     Args:
-        worker_domain: 临时邮箱服务域名（可选，不提供则从环境变量读取）
+        worker_domain: 临时邮箱 Worker 服务域名（可选，不提供则从环境变量读取）
         admin_password: 管理员密码（可选，不提供则从环境变量读取）
+        email_domain: 邮箱域名后缀（可选，不提供则从环境变量读取或从 worker_domain 提取）
         email_prefix: 邮箱前缀（可选，不提供则生成随机8位字符串）
 
     Returns:
@@ -871,7 +873,7 @@ def create_temp_email(
         {
             "email": "xxx@domain.com",
             "jwt": "eyJ...",
-            "tempmail_url": "https://domain/?jwt=eyJ...",
+            "tempmail_url": "https://worker_domain/?jwt=eyJ...",
             "tempmail_name": "xxx@domain.com"
         }
         失败时返回 None
@@ -885,10 +887,19 @@ def create_temp_email(
         worker_domain = os.environ.get("TEMPMAIL_WORKER_DOMAIN", "").strip()
     if not admin_password:
         admin_password = os.environ.get("TEMPMAIL_ADMIN_PASSWORD", "").strip()
+    if not email_domain:
+        email_domain = os.environ.get("TEMPMAIL_EMAIL_DOMAIN", "").strip()
 
     if not worker_domain or not admin_password:
         log_print("[临时邮箱 API] ✗ 未配置临时邮箱服务（请设置 TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）", _level="ERROR")
         return None
+
+    # 如果没有指定邮箱域名，从 worker_domain 提取（去掉 tempmail. 前缀）
+    if not email_domain:
+        if worker_domain.startswith("tempmail."):
+            email_domain = worker_domain[9:]  # 去掉 "tempmail." 前缀
+        else:
+            email_domain = worker_domain
 
     # 生成随机邮箱前缀（如果未提供）
     if not email_prefix:
@@ -903,17 +914,34 @@ def create_temp_email(
     payload = {
         "enablePrefix": True,
         "name": email_prefix,
-        "domain": worker_domain
+        "domain": email_domain
     }
 
     try:
-        log_print(f"[临时邮箱 API] 正在创建新邮箱: {email_prefix}@{worker_domain}")
+        log_print(f"[临时邮箱 API] 正在创建新邮箱: {email_prefix}@{email_domain}")
+        log_print(f"[临时邮箱 API] 请求 URL: {url}")
         response = requests.post(url, json=payload, headers=headers, timeout=30)
-        data = response.json()
+
+        # 检查响应状态
+        log_print(f"[临时邮箱 API] 响应状态码: {response.status_code}")
+
+        # 检查响应内容
+        response_text = response.text.strip()
+        if not response_text:
+            log_print(f"[临时邮箱 API] ✗ 服务器返回空响应", _level="ERROR")
+            return None
+
+        log_print(f"[临时邮箱 API] 响应内容: {response_text[:200]}...")
+
+        try:
+            data = response.json()
+        except ValueError as e:
+            log_print(f"[临时邮箱 API] ✗ 响应不是有效的 JSON: {response_text[:500]}", _level="ERROR")
+            return None
 
         if "jwt" in data:
             jwt_token = data["jwt"]
-            email = f"{email_prefix}@{worker_domain}"
+            email = f"{email_prefix}@{email_domain}"
             tempmail_url = f"https://{worker_domain}/?jwt={jwt_token}"
 
             log_print(f"[临时邮箱 API] ✓ 邮箱创建成功: {email}")
@@ -928,8 +956,10 @@ def create_temp_email(
             log_print(f"[临时邮箱 API] ✗ 创建邮箱失败: {error_msg}", _level="ERROR")
             return None
     except requests.exceptions.RequestException as e:
-        log_print(f"[临时邮箱 API] ✗ 请求失败: {e}", _level="ERROR")
+        log_print(f"[临时邮箱 API] ✗ 网络请求失败: {e}", _level="ERROR")
         return None
     except Exception as e:
+        import traceback
         log_print(f"[临时邮箱 API] ✗ 创建邮箱时发生错误: {e}", _level="ERROR")
+        log_print(f"[临时邮箱 API] 错误详情: {traceback.format_exc()}", _level="ERROR")
         return None
