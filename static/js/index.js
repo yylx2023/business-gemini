@@ -604,63 +604,73 @@
 
             let successCount = 0;
             let failCount = 0;
+            let shouldStop = false;
 
-            try {
-                for (let i = 0; i < count; i++) {
-                    // 更新按钮状态显示进度
-                    btn.innerHTML = `<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 注册中 (${i + 1}/${count})...`;
+            for (let i = 0; i < count && !shouldStop; i++) {
+                // 更新按钮状态显示进度
+                btn.innerHTML = `<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 注册中 (${i + 1}/${count})...`;
 
-                    showToast(`正在注册第 ${i + 1}/${count} 个账号...`, 'info');
+                showToast(`正在注册第 ${i + 1}/${count} 个账号...`, 'info');
 
-                    try {
-                        const res = await apiFetch(`${API_BASE}/api/accounts/auto-register`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ headless: true })
-                        });
+                try {
+                    // 使用原生 fetch 避免 apiFetch 的重定向行为中断循环
+                    const headers = Object.assign({}, { 'Content-Type': 'application/json' }, getAuthHeaders());
+                    const res = await fetch(`${API_BASE}/api/accounts/auto-register`, {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({ headless: true })
+                    });
 
-                        const data = await res.json();
+                    // 处理认证失败
+                    if (res.status === 401 || res.status === 403) {
+                        showToast('登录已过期，请重新登录', 'error');
+                        localStorage.removeItem(ADMIN_TOKEN_KEY);
+                        shouldStop = true;
+                        break;
+                    }
 
-                        if (res.ok && data.success) {
-                            successCount++;
-                            showToast(`第 ${i + 1}/${count} 个账号注册成功！邮箱: ${data.email}`, 'success');
+                    const data = await res.json();
+
+                    if (res.ok && data.success) {
+                        successCount++;
+                        showToast(`第 ${i + 1}/${count} 个账号注册成功！邮箱: ${data.email}`, 'success');
+                        loadAccounts();
+                    } else {
+                        // 部分成功（邮箱创建成功但登录失败）
+                        if (data.id !== undefined) {
+                            failCount++;
+                            showToast(`第 ${i + 1}/${count} 个账号：临时邮箱已创建，但登录失败: ${data.detail || data.error}`, 'warning');
                             loadAccounts();
                         } else {
-                            // 部分成功（邮箱创建成功但登录失败）
-                            if (data.id !== undefined) {
-                                failCount++;
-                                showToast(`第 ${i + 1}/${count} 个账号：临时邮箱已创建，但登录失败: ${data.detail || data.error}`, 'warning');
-                                loadAccounts();
-                            } else {
-                                failCount++;
-                                showToast(`第 ${i + 1}/${count} 个账号注册失败: ${data.error || data.detail || '未知错误'}`, 'error');
-                            }
+                            failCount++;
+                            showToast(`第 ${i + 1}/${count} 个账号注册失败: ${data.error || data.detail || '未知错误'}`, 'error');
                         }
-                    } catch (e) {
-                        failCount++;
-                        showToast(`第 ${i + 1}/${count} 个账号注册失败: ${e.message}`, 'error');
                     }
-
-                    // 如果还有下一个账号要注册，等待一小段时间
-                    if (i < count - 1) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
+                } catch (e) {
+                    failCount++;
+                    showToast(`第 ${i + 1}/${count} 个账号注册失败: ${e.message}`, 'error');
+                    console.error(`批量注册第 ${i + 1} 个账号时出错:`, e);
                 }
 
-                // 显示最终结果
-                if (count > 1) {
-                    if (failCount === 0) {
-                        showToast(`批量注册完成！成功注册 ${successCount} 个账号`, 'success');
-                    } else {
-                        showToast(`批量注册完成：成功 ${successCount} 个，失败 ${failCount} 个`, failCount > successCount ? 'error' : 'warning');
-                    }
+                // 如果还有下一个账号要注册，等待一小段时间
+                if (i < count - 1 && !shouldStop) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
-            } finally {
-                // 恢复按钮和输入框状态
-                btn.disabled = false;
-                countInput.disabled = false;
-                btn.innerHTML = originalText;
             }
+
+            // 显示最终结果
+            if (count > 1) {
+                if (failCount === 0) {
+                    showToast(`批量注册完成！成功注册 ${successCount} 个账号`, 'success');
+                } else {
+                    showToast(`批量注册完成：成功 ${successCount} 个，失败 ${failCount} 个`, failCount > successCount ? 'error' : 'warning');
+                }
+            }
+
+            // 恢复按钮和输入框状态
+            btn.disabled = false;
+            countInput.disabled = false;
+            btn.innerHTML = originalText;
         }
 
         function parseAccountJson(text) {
