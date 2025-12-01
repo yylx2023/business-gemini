@@ -1435,12 +1435,72 @@ def auto_refresh_expired_cookies_worker():
         expired_count = 0
         expired_indices = []
         total_accounts = 0
+        
+        # 先检查标记为过期的账号
         with account_manager.lock:
             total_accounts = len(account_manager.accounts)
             for idx, acc in enumerate(account_manager.accounts):
                 if acc.get("cookie_expired", False):
                     expired_count += 1
                     expired_indices.append(idx)
+        
+        # 实际验证 cookie：对于标记为有效的账号，实际测试 cookie 是否真的有效
+        print(f"[Cookie 自动刷新] 开始验证 Cookie 有效性...")
+        from .utils import get_proxy
+        from .jwt_utils import get_jwt_for_account
+        from .exceptions import AccountAuthError, AccountRequestError
+        
+        proxy = get_proxy()
+        verified_expired = []
+        
+        for idx, acc in enumerate(account_manager.accounts):
+            # 跳过已经标记为过期的账号
+            if acc.get("cookie_expired", False):
+                continue
+            
+            # 检查是否有必要的 cookie 字段
+            secure_c_ses = acc.get("secure_c_ses", "").strip()
+            csesidx = acc.get("csesidx", "").strip()
+            if not secure_c_ses or not csesidx:
+                # Cookie 字段不完整，标记为过期
+                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 字段不完整，标记为过期")
+                with account_manager.lock:
+                    acc["cookie_expired"] = True
+                    acc["cookie_expired_time"] = datetime.now().isoformat()
+                    state = account_manager.account_states.get(idx, {})
+                    state["cookie_expired"] = True
+                account_manager.save_config()
+                if idx not in expired_indices:
+                    expired_count += 1
+                    expired_indices.append(idx)
+                verified_expired.append(idx)
+                continue
+            
+            # 实际验证 cookie：尝试获取 JWT
+            try:
+                test_jwt = get_jwt_for_account(acc, proxy)
+                # 验证成功，cookie 有效
+                # print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证成功")
+            except (AccountAuthError, AccountRequestError, ValueError) as e:
+                # Cookie 验证失败，标记为过期
+                error_msg = str(e)
+                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证失败 - {error_msg}，标记为过期")
+                with account_manager.lock:
+                    acc["cookie_expired"] = True
+                    acc["cookie_expired_time"] = datetime.now().isoformat()
+                    state = account_manager.account_states.get(idx, {})
+                    state["cookie_expired"] = True
+                account_manager.save_config()
+                if idx not in expired_indices:
+                    expired_count += 1
+                    expired_indices.append(idx)
+                verified_expired.append(idx)
+            except Exception as e:
+                # 其他异常，记录但不标记为过期（可能是网络问题等）
+                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证时发生异常（可能是网络问题）: {e}")
+        
+        if verified_expired:
+            print(f"[Cookie 自动刷新] 通过实际验证发现 {len(verified_expired)} 个账号 Cookie 已失效: {verified_expired}")
         
         current_time = time.time()
         time_since_last = int(current_time - last_check_time)
