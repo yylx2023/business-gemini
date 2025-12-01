@@ -1063,8 +1063,9 @@ def register_routes(app):
                 from auto_login_with_email import refresh_single_account
 
                 # 从请求参数中获取 headless 设置
+                # 自动注册默认使用有头模式（False），因为 Google 会检测无头浏览器
                 data = request.json or {}
-                use_headless = data.get("headless", True)
+                use_headless = data.get("headless", False)  # 默认 False（有头模式）
 
                 success = refresh_single_account(account_idx, new_account, headless=use_headless)
 
