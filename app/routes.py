@@ -985,9 +985,150 @@ def register_routes(app):
         # 推送账号更新事件
         emit_account_update(idx, new_account)
         emit_notification("账号添加成功", f"账号 {idx} 已添加", "success")
-        
+
         return jsonify({"success": True, "id": idx})
-    
+
+    @app.route('/api/accounts/auto-register', methods=['POST'])
+    @require_admin
+    def auto_register_account():
+        """自动注册账号（创建临时邮箱 + 自动登录）"""
+        try:
+            from .tempmail_api import create_temp_email
+
+            # 推送开始事件
+            try:
+                emit_notification("开始自动注册", "正在创建临时邮箱...", "info")
+            except Exception:
+                pass
+
+            # 步骤1：创建临时邮箱
+            email_info = create_temp_email()
+            if not email_info:
+                return jsonify({
+                    "error": "创建临时邮箱失败",
+                    "detail": "请检查 TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量配置"
+                }), 500
+
+            tempmail_url = email_info["tempmail_url"]
+            tempmail_name = email_info["tempmail_name"]
+
+            try:
+                emit_notification("临时邮箱创建成功", f"邮箱: {tempmail_name}", "info")
+            except Exception:
+                pass
+
+            # 步骤2：创建空账号并保存临时邮箱信息
+            new_account = {
+                "team_id": "",
+                "secure_c_ses": "",
+                "host_c_oses": "",
+                "csesidx": "",
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+                "available": False,
+                "tempmail_url": tempmail_url,
+                "tempmail_name": tempmail_name
+            }
+
+            account_manager.accounts.append(new_account)
+            account_idx = len(account_manager.accounts) - 1
+            account_manager.account_states[account_idx] = {
+                "jwt": None,
+                "jwt_time": 0,
+                "session": None,
+                "available": False,
+                "cooldown_until": None,
+                "cooldown_reason": "",
+                "quota_usage": {},
+                "quota_reset_date": None
+            }
+            account_manager.config["accounts"] = account_manager.accounts
+            account_manager.save_config()
+
+            # 推送账号更新事件
+            emit_account_update(account_idx, new_account)
+
+            try:
+                emit_notification("正在自动登录", f"使用临时邮箱登录账号 {account_idx}...", "info")
+            except Exception:
+                pass
+
+            # 步骤3：调用自动登录流程
+            try:
+                import sys
+                from pathlib import Path
+                project_root = Path(__file__).parent.parent
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+
+                from auto_login_with_email import refresh_single_account
+
+                # 从请求参数中获取 headless 设置
+                data = request.json or {}
+                use_headless = data.get("headless", True)
+
+                success = refresh_single_account(account_idx, new_account, headless=use_headless)
+
+                if success:
+                    # 重新加载配置
+                    account_manager.load_config()
+
+                    try:
+                        emit_account_update(account_idx, account_manager.accounts[account_idx])
+                        emit_notification("自动注册成功", f"账号 {account_idx} 已注册并登录", "success")
+                    except Exception:
+                        pass
+
+                    return jsonify({
+                        "success": True,
+                        "id": account_idx,
+                        "message": "账号自动注册成功",
+                        "email": tempmail_name
+                    })
+                else:
+                    try:
+                        emit_notification("自动登录失败", f"账号 {account_idx} 登录失败，请手动刷新", "error")
+                    except Exception:
+                        pass
+
+                    return jsonify({
+                        "error": "自动登录失败",
+                        "detail": "临时邮箱已创建，但自动登录失败。账号已添加，请尝试手动刷新 Cookie。",
+                        "id": account_idx,
+                        "email": tempmail_name
+                    }), 500
+
+            except ImportError as e:
+                return jsonify({
+                    "error": "导入登录模块失败",
+                    "detail": f"请确保 auto_login_with_email.py 文件存在: {str(e)}",
+                    "id": account_idx,
+                    "email": tempmail_name
+                }), 500
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[错误] 自动登录过程出错: {error_msg}")
+                import traceback
+                traceback.print_exc()
+
+                try:
+                    emit_notification("自动登录失败", f"账号 {account_idx} 登录失败: {error_msg}", "error")
+                except Exception:
+                    pass
+
+                return jsonify({
+                    "error": "自动登录过程出错",
+                    "detail": error_msg,
+                    "id": account_idx,
+                    "email": tempmail_name
+                }), 500
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[错误] 自动注册失败: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"自动注册失败: {error_msg}"}), 500
+
     @app.route('/api/accounts/<int:account_id>', methods=['PUT'])
     @require_admin
     def update_account(account_id):

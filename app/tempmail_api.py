@@ -853,3 +853,83 @@ def get_verification_code_from_api(
         log_print(f"[临时邮箱 API] 初始化客户端失败: {e}", _level="ERROR")
         return None
 
+
+def create_temp_email(
+    worker_domain: Optional[str] = None,
+    admin_password: Optional[str] = None,
+    email_prefix: Optional[str] = None
+) -> Optional[Dict]:
+    """创建新的临时邮箱
+
+    Args:
+        worker_domain: 临时邮箱服务域名（可选，不提供则从环境变量读取）
+        admin_password: 管理员密码（可选，不提供则从环境变量读取）
+        email_prefix: 邮箱前缀（可选，不提供则生成随机8位字符串）
+
+    Returns:
+        成功时返回包含邮箱信息的字典:
+        {
+            "email": "xxx@domain.com",
+            "jwt": "eyJ...",
+            "tempmail_url": "https://domain/?jwt=eyJ...",
+            "tempmail_name": "xxx@domain.com"
+        }
+        失败时返回 None
+    """
+    import os
+    import random
+    import string
+
+    # 从环境变量读取配置（如果未提供）
+    if not worker_domain:
+        worker_domain = os.environ.get("TEMPMAIL_WORKER_DOMAIN", "").strip()
+    if not admin_password:
+        admin_password = os.environ.get("TEMPMAIL_ADMIN_PASSWORD", "").strip()
+
+    if not worker_domain or not admin_password:
+        log_print("[临时邮箱 API] ✗ 未配置临时邮箱服务（请设置 TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）", _level="ERROR")
+        return None
+
+    # 生成随机邮箱前缀（如果未提供）
+    if not email_prefix:
+        email_prefix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+    # 调用 API 创建新邮箱
+    url = f"https://{worker_domain}/admin/new_address"
+    headers = {
+        "x-admin-auth": admin_password,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "enablePrefix": True,
+        "name": email_prefix,
+        "domain": worker_domain
+    }
+
+    try:
+        log_print(f"[临时邮箱 API] 正在创建新邮箱: {email_prefix}@{worker_domain}")
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        data = response.json()
+
+        if "jwt" in data:
+            jwt_token = data["jwt"]
+            email = f"{email_prefix}@{worker_domain}"
+            tempmail_url = f"https://{worker_domain}/?jwt={jwt_token}"
+
+            log_print(f"[临时邮箱 API] ✓ 邮箱创建成功: {email}")
+            return {
+                "email": email,
+                "jwt": jwt_token,
+                "tempmail_url": tempmail_url,
+                "tempmail_name": email
+            }
+        else:
+            error_msg = data.get("error", data.get("message", str(data)))
+            log_print(f"[临时邮箱 API] ✗ 创建邮箱失败: {error_msg}", _level="ERROR")
+            return None
+    except requests.exceptions.RequestException as e:
+        log_print(f"[临时邮箱 API] ✗ 请求失败: {e}", _level="ERROR")
+        return None
+    except Exception as e:
+        log_print(f"[临时邮箱 API] ✗ 创建邮箱时发生错误: {e}", _level="ERROR")
+        return None

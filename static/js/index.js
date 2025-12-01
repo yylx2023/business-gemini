@@ -560,11 +560,11 @@
                 const res = await apiFetch(`${API_BASE}/api/accounts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        team_id: teamId, 
-                        "secure_c_ses": secureCses, 
-                        "host_c_oses": hostCoses, 
-                        "csesidx": csesidx, 
+                    body: JSON.stringify({
+                        team_id: teamId,
+                        "secure_c_ses": secureCses,
+                        "host_c_oses": hostCoses,
+                        "csesidx": csesidx,
                         "user_agent": userAgent })
                 });
                 const data = await res.json();
@@ -574,6 +574,52 @@
                 loadAccounts();
             } catch (e) {
                 showToast('添加失败: ' + e.message, 'error');
+            }
+        }
+
+        // 自动注册账号（创建临时邮箱 + 自动登录）
+        async function autoRegisterAccount() {
+            const btn = document.getElementById('autoRegisterBtn');
+            const originalText = btn.innerHTML;
+
+            // 确认操作
+            if (!confirm('确定要自动注册新账号吗？\n\n这将：\n1. 创建一个随机临时邮箱\n2. 使用该邮箱自动登录 Gemini Business\n3. 保存账号信息\n\n注意：需要配置临时邮箱服务（TEMPMAIL_WORKER_DOMAIN 和 TEMPMAIL_ADMIN_PASSWORD 环境变量）')) {
+                return;
+            }
+
+            try {
+                // 禁用按钮，显示加载状态
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 注册中...';
+
+                showToast('正在创建临时邮箱...', 'info');
+
+                const res = await apiFetch(`${API_BASE}/api/accounts/auto-register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ headless: true })
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    showToast(`账号注册成功！邮箱: ${data.email}`, 'success');
+                    loadAccounts();
+                } else {
+                    // 部分成功（邮箱创建成功但登录失败）
+                    if (data.id !== undefined) {
+                        showToast(`临时邮箱已创建，但登录失败: ${data.detail || data.error}`, 'warning');
+                        loadAccounts();
+                    } else {
+                        throw new Error(data.error || data.detail || '注册失败');
+                    }
+                }
+            } catch (e) {
+                showToast('自动注册失败: ' + e.message, 'error');
+            } finally {
+                // 恢复按钮状态
+                btn.disabled = false;
+                btn.innerHTML = originalText;
             }
         }
 
