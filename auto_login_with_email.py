@@ -3076,7 +3076,7 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                                                             # 先检查特定的错误提示元素（aside.zyTWof-Ng57nc 中的错误提示）
                                                                             error_detected = False
                                                                             error_text_found = ""
-                                                                            
+
                                                                             try:
                                                                                 # 检查 aside 元素中的错误提示
                                                                                 aside_elements = login_page.locator("aside.zyTWof-Ng57nc").all()
@@ -3090,12 +3090,21 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                                                                                 error_detected = True
                                                                                                 error_text_found = aside_text[:200]
                                                                                                 print(f"[登录] ⚠ 检测到错误提示元素（aside）: {error_text_found}")
+                                                                                                # 打印完整页面内容用于调试
+                                                                                                try:
+                                                                                                    full_page_text = login_page.locator("body").text_content() or ""
+                                                                                                    print(f"[登录] ⚠ 错误页面完整内容:\n{full_page_text[:2000]}")
+                                                                                                    # 打印页面 HTML 结构
+                                                                                                    page_html = login_page.content()
+                                                                                                    print(f"[登录] ⚠ 错误页面 HTML（前2000字符）:\n{page_html[:2000]}")
+                                                                                                except Exception as debug_e:
+                                                                                                    print(f"[登录] 获取错误页面详情失败: {debug_e}")
                                                                                                 break
                                                                                     except:
                                                                                         continue
                                                                             except:
                                                                                 pass
-                                                                            
+
                                                                             # 如果没有在 aside 中找到，检查 div.zyTWof-gIZMF 中的错误提示
                                                                             if not error_detected:
                                                                                 try:
@@ -3109,6 +3118,12 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                                                                                     error_detected = True
                                                                                                     error_text_found = div_text[:200]
                                                                                                     print(f"[登录] ⚠ 检测到错误提示元素（div）: {error_text_found}")
+                                                                                                    # 打印完整页面内容用于调试
+                                                                                                    try:
+                                                                                                        full_page_text = login_page.locator("body").text_content() or ""
+                                                                                                        print(f"[登录] ⚠ 错误页面完整内容:\n{full_page_text[:2000]}")
+                                                                                                    except:
+                                                                                                        pass
                                                                                                     break
                                                                                         except:
                                                                                             continue
