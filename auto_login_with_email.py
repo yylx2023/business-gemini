@@ -1540,7 +1540,85 @@ def extract_cookies_and_csesidx(page) -> Optional[Dict[str, str]]:
     current_url = page.url
     csesidx = None
     team_id = None
-    
+
+    # 检查是否在创建团队页面（/admin/create）
+    if "/admin/create" in current_url:
+        print("[提取] 检测到创建团队页面，正在自动填写并提交...")
+        try:
+            # 等待页面加载完成
+            page.wait_for_timeout(2000)
+
+            # 查找名称输入框并填写
+            name_input_selectors = [
+                'input[formcontrolname="fullName"]',
+                'input[placeholder="全名"]',
+                'input[type="text"][required]',
+                'input.mat-mdc-input-element'
+            ]
+
+            name_filled = False
+            for selector in name_input_selectors:
+                try:
+                    name_input = page.locator(selector).first
+                    if name_input.is_visible(timeout=3000):
+                        name_input.click()
+                        name_input.fill("ddd")
+                        print(f"[提取] ✓ 已填写名称: ddd")
+                        name_filled = True
+                        break
+                except:
+                    continue
+
+            if not name_filled:
+                print("[提取] ⚠ 未找到名称输入框")
+
+            page.wait_for_timeout(1000)
+
+            # 查找并点击"同意并开始使用"按钮
+            submit_btn_selectors = [
+                'button.agree-button',
+                'button[type="submit"]',
+                'button:has-text("同意并开始使用")',
+                'button:has-text("Agree")',
+                'button.mdc-button--unelevated'
+            ]
+
+            btn_clicked = False
+            for selector in submit_btn_selectors:
+                try:
+                    submit_btn = page.locator(selector).first
+                    if submit_btn.is_visible(timeout=3000):
+                        submit_btn.click()
+                        print(f"[提取] ✓ 已点击'同意并开始使用'按钮")
+                        btn_clicked = True
+                        break
+                except:
+                    continue
+
+            if not btn_clicked:
+                print("[提取] ⚠ 未找到提交按钮")
+
+            # 等待跳转到主页（/home/cid/xxx）
+            print("[提取] 等待跳转到主页...")
+            max_wait_home = 30
+            waited_home = 0
+            while waited_home < max_wait_home:
+                current_url = page.url
+                if "/home/cid/" in current_url:
+                    print(f"[提取] ✓ 已跳转到主页: {current_url}")
+                    break
+                page.wait_for_timeout(2000)
+                waited_home += 2
+
+            if "/home/cid/" not in page.url:
+                print(f"[提取] ⚠ 等待跳转超时，当前 URL: {page.url}")
+
+            # 更新 current_url
+            current_url = page.url
+
+        except Exception as e:
+            print(f"[提取] ⚠ 处理创建团队页面时出错: {e}")
+
     # 从 URL 中提取 csesidx
     match = re.search(r'csesidx[=:](\d+)', current_url)
     if match:
@@ -1556,7 +1634,7 @@ def extract_cookies_and_csesidx(page) -> Optional[Dict[str, str]]:
                 print(f"[提取] ✓ 从页面提取到 csesidx: {csesidx}")
         except:
             pass
-    
+
     # 从 URL 路径中提取 team_id（格式：/cid/{team_id}）
     def extract_team_id_from_url(url):
         """从 URL 中提取 team_id"""
