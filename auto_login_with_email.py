@@ -3094,9 +3094,17 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                                                                                 try:
                                                                                                     full_page_text = login_page.locator("body").text_content() or ""
                                                                                                     print(f"[登录] ⚠ 错误页面完整内容:\n{full_page_text[:2000]}")
-                                                                                                    # 打印页面 HTML 结构
-                                                                                                    page_html = login_page.content()
-                                                                                                    print(f"[登录] ⚠ 错误页面 HTML（前2000字符）:\n{page_html[:2000]}")
+                                                                                                    # 打印 body 内的 HTML（更有用）
+                                                                                                    body_html = login_page.locator("body").inner_html()
+                                                                                                    print(f"[登录] ⚠ 错误页面 body HTML（前3000字符）:\n{body_html[:3000]}")
+                                                                                                    # 检查网络请求状态
+                                                                                                    print(f"[登录] 当前 URL: {login_page.url}")
+                                                                                                    # 截图保存
+                                                                                                    try:
+                                                                                                        login_page.screenshot(path="/tmp/error_page.png")
+                                                                                                        print(f"[登录] ⚠ 错误页面截图已保存: /tmp/error_page.png")
+                                                                                                    except:
+                                                                                                        pass
                                                                                                 except Exception as debug_e:
                                                                                                     print(f"[登录] 获取错误页面详情失败: {debug_e}")
                                                                                                 break
