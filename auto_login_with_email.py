@@ -1712,7 +1712,7 @@ def main():
         launch_args = []
         if os.name != 'nt':  # 非 Windows 系统
             launch_args = ['--no-sandbox', '--disable-setuid-sandbox']
-        
+
         # 添加反检测参数，降低被 reCAPTCHA 识别的风险
         launch_args.extend([
             '--disable-blink-features=AutomationControlled',  # 禁用自动化控制特征
@@ -1722,9 +1722,12 @@ def main():
             '--disable-infobars',  # 禁用信息栏
             '--disable-web-security',  # 禁用 Web 安全（谨慎使用）
             '--disable-features=IsolateOrigins,site-per-process',  # 禁用某些安全特性
+            '--window-size=1920,1080',  # 设置窗口大小
         ])
-        
-        browser = p.chromium.launch(headless=use_headless, args=launch_args)
+
+        # 使用新的无头模式（headless="new"），更难被检测
+        headless_mode = "new" if use_headless else False
+        browser = p.chromium.launch(headless=headless_mode, args=launch_args)
         
         # 创建浏览器上下文，使用真实的用户代理和视口
         context = browser.new_context(
@@ -2235,7 +2238,7 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
             launch_args = []
             if os.name != 'nt':  # 非 Windows 系统
                 launch_args = ['--no-sandbox', '--disable-setuid-sandbox']
-            
+
             # 添加反检测参数，降低被 reCAPTCHA 识别的风险
             launch_args.extend([
                 '--disable-blink-features=AutomationControlled',  # 禁用自动化控制特征
@@ -2245,9 +2248,13 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                 '--disable-infobars',  # 禁用信息栏
                 '--disable-web-security',  # 禁用 Web 安全（谨慎使用）
                 '--disable-features=IsolateOrigins,site-per-process',  # 禁用某些安全特性
+                '--window-size=1920,1080',  # 设置窗口大小
             ])
-            
-            browser = p.chromium.launch(headless=headless, args=launch_args)
+
+            # 使用新的无头模式（headless="new"），更难被检测
+            # 旧的 headless=True 会被很多网站检测到
+            headless_mode = "new" if headless else False
+            browser = p.chromium.launch(headless=headless_mode, args=launch_args)
             print(f"[登录] ✓ 浏览器已启动")
             
             # 创建浏览器上下文，使用真实的用户代理和视口
