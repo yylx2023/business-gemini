@@ -3012,9 +3012,79 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                             
                                             if email_sent_confirmed:
                                                 print("[登录] ✓ 检测到验证码邮件发送成功的提示，开始获取验证码...")
-                                                # 注意：不再额外点击"重新发送验证码"按钮
-                                                # 因为测试发现额外点击会触发 Google 的限制，导致"出了点问题"错误
-                                                # 第一次验证码通常已经发送成功，不需要额外点击
+                                                # 为了确保邮件发送成功，在确认验证码已发送成功后，再点击一次"重新发送验证码"按钮
+                                                if resend_already_clicked:
+                                                    print("[登录] ℹ 已在检测循环中点击过重新发送验证码按钮，跳过重复点击")
+                                                else:
+                                                    # 再点击一次"重新发送验证码"按钮，确保邮件发送成功
+                                                    print("[登录] 为了确保邮件发送成功，再点击一次重新发送验证码按钮...")
+                                                    try:
+                                                        resend_btn_selectors_ensure = [
+                                                            "button[aria-label='重新发送验证码']",
+                                                            "button:has-text('重新发送验证码')",
+                                                            "button:has-text('重新发送')",
+                                                            "button:has-text('Resend')",
+                                                        ]
+                                                        resend_clicked_ensure = False
+                                                        for selector_ensure in resend_btn_selectors_ensure:
+                                                            try:
+                                                                resend_btn_ensure = login_page.locator(selector_ensure).first
+                                                                if resend_btn_ensure.count() > 0:
+                                                                    resend_btn_ensure.wait_for(state="visible", timeout=5000)
+                                                                    if not resend_btn_ensure.is_disabled():
+                                                                        # 在点击前等待 reCAPTCHA 准备好
+                                                                        if wait_for_recaptcha_ready(login_page, timeout=5):
+                                                                            print("[登录] reCAPTCHA 已准备好，准备点击重新发送验证码按钮...")
+
+                                                                        # 模拟真实用户行为：先移动鼠标到按钮位置
+                                                                        try:
+                                                                            box = resend_btn_ensure.bounding_box()
+                                                                            if box:
+                                                                                login_page.mouse.move(
+                                                                                    box['x'] + box['width'] / 2 + random.uniform(-5, 5),
+                                                                                    box['y'] + box['height'] / 2 + random.uniform(-5, 5)
+                                                                                )
+                                                                                login_page.wait_for_timeout(random.randint(100, 300))
+                                                                        except:
+                                                                            pass
+
+                                                                        # 记录点击前的页面状态
+                                                                        try:
+                                                                            before_click_url_ensure = login_page.url
+                                                                            before_click_text_ensure = login_page.locator("body").text_content() or ""
+                                                                            before_click_preview_ensure = before_click_text_ensure[:500] if len(before_click_text_ensure) > 500 else before_click_text_ensure
+                                                                            print(f"[登录] 点击前 URL: {before_click_url_ensure}")
+                                                                            print(f"[登录] 点击前页面文本预览: {before_click_preview_ensure}")
+                                                                        except:
+                                                                            pass
+
+                                                                        # 点击按钮
+                                                                        resend_btn_ensure.click(delay=random.randint(50, 150))
+                                                                        print(f"[登录] ✓ 已点击重新发送验证码按钮（确保邮件发送成功）")
+
+                                                                        # 点击后等待 reCAPTCHA 验证完成
+                                                                        wait_for_recaptcha_complete(login_page, timeout=30)
+
+                                                                        # 等待一下让页面响应
+                                                                        login_page.wait_for_timeout(2000)
+
+                                                                        # 点击后检查页面是否有错误提示
+                                                                        try:
+                                                                            after_click_url_ensure = login_page.url
+                                                                            print(f"[登录] 点击后 URL: {after_click_url_ensure}")
+                                                                        except Exception as check_e:
+                                                                            print(f"[登录] ⚠ 检查页面状态时出错: {check_e}")
+
+                                                                        resend_clicked_ensure = True
+                                                                        resend_already_clicked = True  # 标记已点击
+                                                                        break
+                                                            except:
+                                                                continue
+
+                                                        if not resend_clicked_ensure:
+                                                            print("[登录] ⚠ 未找到或无法点击重新发送验证码按钮，继续获取验证码...")
+                                                    except Exception as e:
+                                                        print(f"[登录] ⚠ 点击重新发送验证码按钮时出错: {e}，继续获取验证码...")
                                             else:
                                                 print(f"[登录] ✗ 等待超时（{max_wait_sent}秒），未检测到验证码邮件发送成功的提示（方式1-3均失败）")
                                                 print("[登录] ✗ 验证码可能未发送成功，无法继续")
@@ -3107,7 +3177,7 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                 code = get_verification_code_from_tempmail_browser(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=True)
                             elif force_api_mode:
                                 # 强制使用 API 方式（即使失败也不切换到浏览器方式）
-                                code = get_verification_code_from_tempmail(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=True, account_config=account, force_api=True)
+                                code = get_verification_code_from_tempmail(email_page, timeout=30, tempmail_url=tempmail_url, retry_mode=True, account_config=account, force_api=True)
                             else:
                                 # 自动模式：重试模式，立即刷新并提取，不等待
                                 code = get_verification_code_from_tempmail(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=True, account_config=account, force_api=False)
@@ -3118,7 +3188,7 @@ def _refresh_single_account_internal(account_idx: int, account: dict, headless: 
                                 code = get_verification_code_from_tempmail_browser(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=False)
                             elif force_api_mode:
                                 # 强制使用 API 方式
-                                code = get_verification_code_from_tempmail(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=False, account_config=account, force_api=True)
+                                code = get_verification_code_from_tempmail(email_page, timeout=30, tempmail_url=tempmail_url, retry_mode=False, account_config=account, force_api=True)
                             else:
                                 # 自动模式：优先尝试 API 方式
                                 code = get_verification_code_from_tempmail(email_page, timeout=120, tempmail_url=tempmail_url, retry_mode=False, account_config=account, force_api=False)
