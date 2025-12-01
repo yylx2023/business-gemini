@@ -563,6 +563,13 @@ def register_routes(app):
 
             response_content = build_openai_response_content(chat_response, request.host_url, account_manager, request)
 
+            # 如果响应包含图片，只返回图片 URL，不返回文本信息
+            if isinstance(response_content, list):
+                media_parts = [item for item in response_content if item.get("type") == "image_url"]
+                if media_parts:
+                    # 有图片，只返回图片 URL
+                    response_content = media_parts
+
             if stream:
                 def generate():
                     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
