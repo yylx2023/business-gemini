@@ -1558,18 +1558,23 @@ def extract_cookies_and_csesidx(page) -> Optional[Dict[str, str]]:
             pass
     
     # 从 URL 路径中提取 team_id（格式：/cid/{team_id}）
-    try:
-        parsed_url = urlparse(current_url)
-        path_parts = parsed_url.path.split('/')
-        cid_index = path_parts.index('cid') if 'cid' in path_parts else -1
-        if cid_index >= 0 and cid_index + 1 < len(path_parts):
-            team_id = path_parts[cid_index + 1]
-            # 调试日志已关闭
-            # print(f"[提取] ✓ 从URL提取到 team_id: {team_id}")
-    except:
-        pass
-    
-    # 如果从 URL 中没找到 team_id，尝试从页面中提取
+    def extract_team_id_from_url(url):
+        """从 URL 中提取 team_id"""
+        try:
+            parsed = urlparse(url)
+            parts = parsed.path.split('/')
+            idx = parts.index('cid') if 'cid' in parts else -1
+            if idx >= 0 and idx + 1 < len(parts):
+                return parts[idx + 1]
+        except:
+            pass
+        return None
+
+    team_id = extract_team_id_from_url(current_url)
+    if team_id:
+        print(f"[提取] ✓ 从当前URL提取到 team_id: {team_id}")
+
+    # 如果从当前 URL 中没找到 team_id，尝试从页面中提取
     if not team_id:
         try:
             page_text = page.locator("body").text_content() or ""
@@ -1577,10 +1582,34 @@ def extract_cookies_and_csesidx(page) -> Optional[Dict[str, str]]:
             team_id_match = re.search(r'team[_-]?id["\']?\s*[:=]\s*["\']?([a-f0-9-]+)', page_text, re.IGNORECASE)
             if team_id_match:
                 team_id = team_id_match.group(1)
-                # 调试日志已关闭
-                #                 print(f"[提取] ✓ 从页面提取到 team_id: {team_id}")
+                print(f"[提取] ✓ 从页面内容提取到 team_id: {team_id}")
         except:
             pass
+
+    # 如果还没有 team_id，尝试导航到设置页面获取
+    if not team_id:
+        try:
+            print("[提取] 尝试从设置页面获取 team_id...")
+            # 访问 Gemini Business 设置页面（包含 team_id 的 URL）
+            settings_url = "https://gemini.google.com/u/0/settings"
+            page.goto(settings_url, timeout=15000)
+            time.sleep(2)
+
+            # 检查 URL 是否包含 cid
+            new_url = page.url
+            team_id = extract_team_id_from_url(new_url)
+            if team_id:
+                print(f"[提取] ✓ 从设置页面URL提取到 team_id: {team_id}")
+            else:
+                # 尝试从页面内容中提取
+                page_html = page.content()
+                # 查找 /cid/ 模式
+                cid_match = re.search(r'/cid/([a-f0-9-]+)', page_html)
+                if cid_match:
+                    team_id = cid_match.group(1)
+                    print(f"[提取] ✓ 从设置页面内容提取到 team_id: {team_id}")
+        except Exception as e:
+            print(f"[提取] 从设置页面获取 team_id 失败: {e}")
     
     if secure_c_ses:
         print(f"[提取] ✓ 提取到 __Secure-C_SES: {secure_c_ses[:50]}...")
