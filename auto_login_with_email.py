@@ -2069,13 +2069,14 @@ def main():
                 # 在某些非交互环境下可能没有标准输入，直接跳过
                 pass
 
-def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = None, tempmail_name: Optional[str] = None):
+def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = None, tempmail_name: Optional[str] = None, tempmail_url: Optional[str] = None):
     """保存 Cookie 到配置（支持数据库和 JSON）
-    
+
     Args:
         cookies_data: Cookie 数据
         account_index: 如果提供，更新指定索引的账号；否则创建新账号
         tempmail_name: 临时邮箱名称（用于显示）
+        tempmail_url: 临时邮箱 URL（用于后续刷新 Cookie）
     """
     try:
         # 尝试使用 account_manager（如果可用，会自动使用数据库）
@@ -2100,14 +2101,18 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
                 "available": True,
             }
-            
+
             # 如果提取到了 team_id，添加到账号中
             if "team_id" in cookies_data and cookies_data["team_id"]:
                 account_data["team_id"] = cookies_data["team_id"]
-            
+
             # 如果提供了邮箱名称，保存它
             if tempmail_name:
                 account_data["tempmail_name"] = tempmail_name
+
+            # 如果提供了 tempmail_url，保存它
+            if tempmail_url:
+                account_data["tempmail_url"] = tempmail_url
             
             # 更新现有账号或创建新账号
             if account_index is not None and 0 <= account_index < len(account_manager.accounts):
@@ -2145,9 +2150,24 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
             else:
                 # 创建新账号
                 account_manager.accounts.append(account_data)
+                new_index = len(account_manager.accounts) - 1
+
+                # 初始化新账号的 account_states
+                account_manager.account_states[new_index] = {
+                    "jwt": None,
+                    "jwt_time": 0,
+                    "session": None,
+                    "available": True,
+                    "cooldown_until": None,
+                    "cooldown_reason": "",
+                    "quota_usage": {},
+                    "quota_reset_date": None,
+                    "cookie_expired": False
+                }
+
                 account_manager.config["accounts"] = account_manager.accounts
                 account_manager.save_config()
-                print(f"[保存] ✓ 已保存新账号（账号 {len(account_manager.accounts) - 1}）")
+                print(f"[保存] ✓ 已保存新账号（账号 {new_index}）")
             
             return
         except ImportError:

@@ -612,15 +612,11 @@ class DrissionPageWorker:
             cookies_data = self.extract_cookies_and_data()
 
             if cookies_data:
-                # 保存到配置
-                cookies_data["tempmail_url"] = tempmail_url
-                cookies_data["tempmail_name"] = email
-
                 save_to_config(
                     cookies_data,
                     account_index=99999 + account_idx,  # 大索引确保创建新账号
-                    tempmail_url=tempmail_url,
-                    tempmail_name=email
+                    tempmail_name=email,
+                    tempmail_url=tempmail_url
                 )
 
                 print(f"[注册] ✓ 注册成功!")
