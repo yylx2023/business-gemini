@@ -1052,7 +1052,7 @@ def register_routes(app):
             except Exception:
                 pass
 
-            # 步骤3：调用自动登录流程
+            # 步骤3：调用自动登录流程（使用 DrissionPage）
             try:
                 import sys
                 from pathlib import Path
@@ -1060,14 +1060,14 @@ def register_routes(app):
                 if str(project_root) not in sys.path:
                     sys.path.insert(0, str(project_root))
 
-                from auto_login_with_email import refresh_single_account
+                from drission_worker import register_new_account_drission
 
                 # 从请求参数中获取 headless 设置
                 # 自动注册默认使用有头模式（False），因为 Google 会检测无头浏览器
                 data = request.json or {}
                 use_headless = data.get("headless", False)  # 默认 False（有头模式）
 
-                success = refresh_single_account(account_idx, new_account, headless=use_headless)
+                success = register_new_account_drission(tempmail_name, tempmail_url, account_idx, headless=use_headless)
 
                 if success:
                     # 重新加载配置
@@ -1341,7 +1341,7 @@ def register_routes(app):
         except Exception as e:
             print(f"[警告] WebSocket 推送失败: {e}")
         
-        # 使用临时邮箱方式刷新
+        # 使用 DrissionPage 刷新（与批量注册脚本相同的方式）
         try:
             import sys
             from pathlib import Path
@@ -1349,16 +1349,16 @@ def register_routes(app):
             project_root = Path(__file__).parent.parent
             if str(project_root) not in sys.path:
                 sys.path.insert(0, str(project_root))
-            
-            from auto_login_with_email import refresh_single_account
-            
+
+            from drission_worker import refresh_single_account_drission
+
             # 调用单个账号刷新函数（无头模式）
             # 从请求参数中获取 headless 设置
             # Windows 默认使用有头模式（False），方便调试和查看过程
             # Linux 服务器可以传递 headless=true 使用无头模式
             data = request.json or {}
             use_headless = data.get("headless", True)  # 默认 True（无头模式）
-            success = refresh_single_account(account_id, acc, headless=use_headless)
+            success = refresh_single_account_drission(account_id, acc, headless=use_headless)
             
             if success:
                 # 重新加载配置，获取最新的账号状态

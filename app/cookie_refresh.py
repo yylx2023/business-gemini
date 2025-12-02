@@ -1509,7 +1509,7 @@ def auto_refresh_expired_cookies_worker():
         if expired_count > 0:
             print(f"[Cookie 自动刷新] 检测到 {expired_count} 个过期的账号，开始自动刷新...")
             
-            # 导入并调用批量刷新函数
+            # 导入并调用批量刷新函数（使用 DrissionPage）
             try:
                 import sys
                 from pathlib import Path
@@ -1517,14 +1517,14 @@ def auto_refresh_expired_cookies_worker():
                 project_root = Path(__file__).parent.parent
                 if str(project_root) not in sys.path:
                     sys.path.insert(0, str(project_root))
-                
-                from auto_login_with_email import refresh_expired_accounts
-                
+
+                from drission_worker import refresh_expired_accounts_drission
+
                 # 检查是否强制使用无头/有头模式（通过环境变量）
                 import os
                 force_headless = os.environ.get('FORCE_HEADLESS') == '1'
                 force_headed = os.environ.get('FORCE_HEADED') == '1'
-                
+
                 # 确定 headless 模式
                 if force_headed:
                     use_headless = False  # 强制有头模式
@@ -1532,17 +1532,17 @@ def auto_refresh_expired_cookies_worker():
                     use_headless = True  # 强制无头模式
                 else:
                     use_headless = True  # 默认无头模式（后台线程）
-                
-                refresh_expired_accounts(headless=use_headless)
-                
+
+                refresh_expired_accounts_drission(headless=use_headless)
+
                 print("[Cookie 自动刷新] 批量刷新完成")
-                
+
                 # 重新加载配置，获取最新的账号状态
                 account_manager.load_config()
-                
+
             except ImportError as e:
                 print(f"[Cookie 自动刷新] ✗ 导入刷新模块失败: {e}")
-                print("    请确保 auto_login_with_email.py 文件存在")
+                print("    请确保 drission_worker.py 文件存在")
             except Exception as e:
                 print(f"[Cookie 自动刷新] ✗ 刷新过程出错: {e}")
                 import traceback
