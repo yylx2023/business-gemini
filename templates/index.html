@@ -128,7 +128,7 @@
                         <svg class="icon card-title-icon"><use xlink:href="#icon-list"></use></svg>
                         账号列表
                     </div>
-                    <div style="display: flex; gap: 12px; align-items: center;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                         <a href="account_extractor.html" target="_blank" class="btn btn-outline" style="text-decoration: none;">
                             <svg class="icon"><use xlink:href="#icon-zap"></use></svg>
                             账号提取工具
@@ -146,12 +146,17 @@
                                 自动注册账号
                             </button>
                         </div>
+                        <button class="btn btn-warning" onclick="batchRefreshAccounts()" id="batchRefreshBtn" disabled title="请先选择要刷新的账号">
+                            <svg class="icon"><use xlink:href="#icon-refresh-cw"></use></svg>
+                            批量刷新选中 (<span id="selectedCount">0</span>)
+                        </button>
                     </div>
                 </div>
                 <div class="table-container">
                     <table id="accountsTable">
                         <thead>
                             <tr>
+                                <th style="width: 40px;"><input type="checkbox" id="selectAllAccounts" onchange="toggleSelectAll()" title="全选/取消全选"></th>
                                 <th>序号</th>
                                 <th>Team ID</th>
                                 <th>临时邮箱</th>

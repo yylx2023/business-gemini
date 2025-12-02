@@ -317,8 +317,14 @@
                 if (currentIndexEl) {
                     currentIndexEl.textContent = data.current_index || 0;
                 }
+
+                // 清理已删除账号的选中状态
+                const currentAccountIds = new Set(accountsData.map(a => a.id));
+                selectedAccountIds = new Set([...selectedAccountIds].filter(id => currentAccountIds.has(id)));
+
                 renderAccounts();
                 updateAccountStats();
+                updateSelectedCount();
             } catch (e) {
                 // 调试日志已关闭
                 // console.error('加载账号列表失败:', e);
@@ -331,15 +337,19 @@
             }
         }
 
+        // 存储选中的账号 ID
+        let selectedAccountIds = new Set();
+
         function renderAccounts() {
             const tbody = document.getElementById('accountsTableBody');
             if (!tbody) return;
 
             if (accountsData.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">
+                tbody.innerHTML = `<tr><td colspan="8" class="empty-state">
                     <div class="empty-state-icon"><svg class="icon"><use xlink:href="#icon-users"></use></svg></div>
                     <h3>暂无账号</h3><p>点击 "添加账号" 按钮来创建一个。</p>
                 </td></tr>`;
+                updateSelectedCount();
                 return;
             }
 
@@ -440,8 +450,19 @@
                 }
                 
                 const tempmailName = acc.tempmail_name || '-';
+                const isSelected = selectedAccountIds.has(acc.id);
+                // 检查是否有临时邮箱 URL（批量刷新需要）
+                const canRefresh = acc.tempmail_url && acc.tempmail_url.length > 0;
                 return `
-                <tr>
+                <tr class="${isSelected ? 'selected-row' : ''}">
+                    <td>
+                        <input type="checkbox"
+                               class="account-checkbox"
+                               data-id="${acc.id}"
+                               ${isSelected ? 'checked' : ''}
+                               ${canRefresh ? '' : 'disabled title="无临时邮箱URL，无法批量刷新"'}
+                               onchange="toggleAccountSelection(${acc.id})">
+                    </td>
                     <td>${index + 1}</td>
                     <td><code>${acc.team_id || '-'}</code></td>
                     <td style="font-size: 12px; color: var(--text-muted);" title="${tempmailName}">${tempmailName}</td>
@@ -464,6 +485,9 @@
                 </tr>
             `;
             }).join('');
+
+            // 更新全选复选框状态
+            updateSelectAllCheckbox();
         }
 
         function updateAccountStats() {
@@ -743,6 +767,177 @@
             autoRefreshBtn.style.display = 'inline-block';
             
             openModal('refreshCookieModal');
+        }
+
+        /**
+         * 切换单个账号的选中状态
+         */
+        function toggleAccountSelection(accountId) {
+            if (selectedAccountIds.has(accountId)) {
+                selectedAccountIds.delete(accountId);
+            } else {
+                selectedAccountIds.add(accountId);
+            }
+            updateSelectedCount();
+            updateSelectAllCheckbox();
+            // 更新行的选中样式
+            const row = document.querySelector(`input[data-id="${accountId}"]`)?.closest('tr');
+            if (row) {
+                row.classList.toggle('selected-row', selectedAccountIds.has(accountId));
+            }
+        }
+
+        /**
+         * 全选/取消全选
+         */
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAllAccounts');
+            const isChecked = selectAllCheckbox.checked;
+
+            // 只选中可以刷新的账号（有 tempmail_url 的）
+            accountsData.forEach(acc => {
+                if (acc.tempmail_url && acc.tempmail_url.length > 0) {
+                    if (isChecked) {
+                        selectedAccountIds.add(acc.id);
+                    } else {
+                        selectedAccountIds.delete(acc.id);
+                    }
+                }
+            });
+
+            updateSelectedCount();
+            renderAccounts();
+        }
+
+        /**
+         * 更新全选复选框状态
+         */
+        function updateSelectAllCheckbox() {
+            const selectAllCheckbox = document.getElementById('selectAllAccounts');
+            if (!selectAllCheckbox) return;
+
+            // 获取可选账号数量（有 tempmail_url 的）
+            const selectableAccounts = accountsData.filter(acc => acc.tempmail_url && acc.tempmail_url.length > 0);
+            const selectedFromSelectable = selectableAccounts.filter(acc => selectedAccountIds.has(acc.id));
+
+            if (selectableAccounts.length === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedFromSelectable.length === selectableAccounts.length) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedFromSelectable.length > 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }
+        }
+
+        /**
+         * 更新选中数量显示
+         */
+        function updateSelectedCount() {
+            const countEl = document.getElementById('selectedCount');
+            const btn = document.getElementById('batchRefreshBtn');
+            const count = selectedAccountIds.size;
+
+            if (countEl) countEl.textContent = count;
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.title = count === 0 ? '请先选择要刷新的账号' : `刷新 ${count} 个选中的账号`;
+            }
+        }
+
+        /**
+         * 批量刷新选中的账号
+         */
+        async function batchRefreshAccounts() {
+            const count = selectedAccountIds.size;
+            if (count === 0) {
+                showToast('请先选择要刷新的账号', 'warning');
+                return;
+            }
+
+            const confirmMsg = `确定要批量刷新 ${count} 个选中的账号吗？\n\n这将：\n1. 使用每个账号关联的临时邮箱\n2. 自动完成验证码验证\n3. 更新 Cookie 信息\n\n每个账号刷新成功后才会开始下一个。`;
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            const btn = document.getElementById('batchRefreshBtn');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+
+            const accountIds = Array.from(selectedAccountIds);
+            let successCount = 0;
+            let failCount = 0;
+            let shouldStop = false;
+
+            for (let i = 0; i < accountIds.length && !shouldStop; i++) {
+                const accountId = accountIds[i];
+                const acc = accountsData.find(a => a.id === accountId);
+                const displayName = acc ? (acc.tempmail_name || `账号${accountId}`) : `账号${accountId}`;
+
+                // 更新按钮状态显示进度
+                btn.innerHTML = `<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 刷新中 (${i + 1}/${count})...`;
+
+                showToast(`正在刷新 ${displayName} (${i + 1}/${count})...`, 'info');
+
+                try {
+                    const headers = Object.assign({}, { 'Content-Type': 'application/json' }, getAuthHeaders());
+                    const res = await fetch(`${API_BASE}/api/accounts/${accountId}/auto-refresh-cookie`, {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({ headless: true })
+                    });
+
+                    // 处理认证失败
+                    if (res.status === 401 || res.status === 403) {
+                        showToast('登录已过期，请重新登录', 'error');
+                        localStorage.removeItem(ADMIN_TOKEN_KEY);
+                        shouldStop = true;
+                        break;
+                    }
+
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        successCount++;
+                        showToast(`${displayName} 刷新成功!`, 'success');
+                        // 刷新成功后从选中列表移除
+                        selectedAccountIds.delete(accountId);
+                    } else {
+                        failCount++;
+                        const errorMsg = data.error || data.detail || '未知错误';
+                        showToast(`${displayName} 刷新失败: ${errorMsg}`, 'error');
+                    }
+                } catch (e) {
+                    failCount++;
+                    showToast(`${displayName} 刷新失败: ${e.message}`, 'error');
+                    console.error(`批量刷新账号 ${accountId} 时出错:`, e);
+                }
+
+                // 如果还有下一个账号要刷新，等待一小段时间
+                if (i < accountIds.length - 1 && !shouldStop) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            // 显示最终结果
+            if (count > 1) {
+                if (failCount === 0) {
+                    showToast(`批量刷新完成！成功刷新 ${successCount} 个账号`, 'success');
+                } else {
+                    showToast(`批量刷新完成：成功 ${successCount} 个，失败 ${failCount} 个`, failCount > successCount ? 'error' : 'warning');
+                }
+            }
+
+            // 恢复按钮状态
+            btn.innerHTML = originalText;
+            updateSelectedCount();
+
+            // 刷新账号列表
+            await loadAccounts();
         }
 
         /**

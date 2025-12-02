@@ -635,3 +635,30 @@
         .spin {
             animation: spin 1s linear infinite;
         }
+
+        /* 选中行样式 */
+        tr.selected-row td {
+            background: var(--primary-light) !important;
+        }
+        tr.selected-row:hover td {
+            background: var(--primary-light) !important;
+            filter: brightness(0.95);
+        }
+
+        /* 复选框样式 */
+        .account-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--primary);
+        }
+        .account-checkbox:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        /* 批量刷新按钮样式 */
+        #batchRefreshBtn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }

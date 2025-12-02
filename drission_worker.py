@@ -506,19 +506,23 @@ class DrissionPageWorker:
 
             if cookies_data:
                 # 保存到配置
+                # save_to_config 会根据 team_id 自动判断：
+                # - 如果 team_id 已存在，则更新现有账号
+                # - 如果 team_id 不存在，则创建新账号
                 if is_new:
-                    # 新账号使用大索引确保创建新账号
+                    # 新账号：传递 None，让 save_to_config 根据 team_id 自动判断
                     save_to_config(
                         cookies_data,
-                        account_index=99999 + account_idx,
+                        account_index=None,
                         tempmail_name=email,
                         tempmail_url=tempmail_url
                     )
                 else:
-                    # 刷新已有账号
+                    # 刷新已有账号：也传递 None，让 save_to_config 根据 team_id 自动判断
+                    # 这样即使账号索引变化了，也能正确更新
                     save_to_config(
                         cookies_data,
-                        account_index=account_idx,
+                        account_index=None,
                         tempmail_name=email,
                         tempmail_url=tempmail_url
                     )

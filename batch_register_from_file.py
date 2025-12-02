@@ -612,9 +612,12 @@ class DrissionPageWorker:
             cookies_data = self.extract_cookies_and_data()
 
             if cookies_data:
+                # save_to_config 会根据 team_id 自动判断：
+                # - 如果 team_id 已存在，则更新现有账号
+                # - 如果 team_id 不存在，则创建新账号
                 save_to_config(
                     cookies_data,
-                    account_index=99999 + account_idx,  # 大索引确保创建新账号
+                    account_index=None,  # 传递 None，让 save_to_config 根据 team_id 自动判断
                     tempmail_name=email,
                     tempmail_url=tempmail_url
                 )

@@ -2114,36 +2114,54 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
             if tempmail_url:
                 account_data["tempmail_url"] = tempmail_url
             
+            # 根据 team_id 查找已存在的账号
+            team_id = cookies_data.get("team_id", "")
+            existing_index = None
+
+            if team_id:
+                for idx, acc in enumerate(account_manager.accounts):
+                    if acc.get("team_id") == team_id:
+                        existing_index = idx
+                        print(f"[保存] 根据 team_id 找到已存在的账号 {idx}")
+                        break
+
+            # 如果根据 team_id 找到了账号，使用该索引
+            if existing_index is not None:
+                account_index = existing_index
+
             # 更新现有账号或创建新账号
             if account_index is not None and 0 <= account_index < len(account_manager.accounts):
                 # 更新现有账号，只更新 Cookie 相关字段，保留其他所有字段
                 old_account = account_manager.accounts[account_index]
-                
+
                 # 只更新 Cookie 相关字段
                 old_account["secure_c_ses"] = account_data["secure_c_ses"]
                 old_account["host_c_oses"] = account_data["host_c_oses"]
                 old_account["csesidx"] = account_data["csesidx"]
-                
+
                 # 如果新数据有 team_id，更新它；否则保留原有的（包括空字符串）
                 if "team_id" in cookies_data and cookies_data["team_id"]:
                     old_account["team_id"] = cookies_data["team_id"]
                 # 如果新数据没有 team_id，保留原有的（不覆盖）
-                
+
                 # 如果提供了邮箱名称，更新它
                 if tempmail_name:
                     old_account["tempmail_name"] = tempmail_name
                 # 如果新数据没有 tempmail_name，保留原有的（不覆盖）
-                
-                # 保留 tempmail_url（如果存在）
+
+                # 如果提供了 tempmail_url，更新它
+                if tempmail_url:
+                    old_account["tempmail_url"] = tempmail_url
+
                 # 不更新 user_agent，保留原有的
-                
+
                 # 清除过期标记
                 old_account.pop("cookie_expired", None)
                 old_account.pop("cookie_expired_time", None)
-                
+
                 # 恢复账号可用状态
                 old_account["available"] = True
-                
+
                 account_manager.config["accounts"] = account_manager.accounts
                 account_manager.save_config()
                 print(f"[保存] ✓ 已更新账号 {account_index}")
@@ -2214,7 +2232,26 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
         # 如果提供了邮箱名称，保存它
         if tempmail_name:
             account_data["tempmail_name"] = tempmail_name
-        
+
+        # 如果提供了 tempmail_url，保存它
+        if tempmail_url:
+            account_data["tempmail_url"] = tempmail_url
+
+        # 根据 team_id 查找已存在的账号
+        team_id = cookies_data.get("team_id", "")
+        existing_index = None
+
+        if team_id:
+            for idx, acc in enumerate(config["accounts"]):
+                if acc.get("team_id") == team_id:
+                    existing_index = idx
+                    print(f"[保存] 根据 team_id 找到已存在的账号 {idx}")
+                    break
+
+        # 如果根据 team_id 找到了账号，使用该索引
+        if existing_index is not None:
+            account_index = existing_index
+
         # 更新现有账号或创建新账号
         if account_index is not None and 0 <= account_index < len(config["accounts"]):
             # 更新现有账号，保留原有的一些字段
@@ -2227,13 +2264,13 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
             # 保留 team_id（如果新数据没有）
             if "team_id" not in account_data and "team_id" in old_account:
                 account_data["team_id"] = old_account["team_id"]
-            # 保留 tempmail_url（如果存在）
-            if "tempmail_url" in old_account:
+            # 保留 tempmail_url（如果新数据没有）
+            if "tempmail_url" not in account_data and "tempmail_url" in old_account:
                 account_data["tempmail_url"] = old_account["tempmail_url"]
             # 清除过期标记
             account_data.pop("cookie_expired", None)
             account_data.pop("cookie_expired_time", None)
-            
+
             config["accounts"][account_index] = account_data
             print(f"[保存] ✓ 已更新配置文件中的账号 {account_index}")
         else:
