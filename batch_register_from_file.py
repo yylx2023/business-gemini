@@ -509,64 +509,97 @@ class DrissionPageWorker:
 
             time.sleep(3)
 
-            # 输入姓名
-            print(f"[注册] 正在输入姓名...")
-            fullname = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=5))
+            # 检查是否需要输入姓名（新账号需要，已注册账号不需要）
+            print(f"[注册] 检查是否需要输入姓名...")
             name_selectors = [
                 'xpath://input[@formcontrolname="fullName"]',
                 'xpath://input[@placeholder="全名"]',
                 'input[formcontrolname="fullName"]',
             ]
 
-            name_input_found = False
-            for selector in name_selectors:
-                if self.wait_for_element(selector, timeout=15):
-                    name_input_found = True
-                    break
-
-            if not name_input_found:
-                raise Exception("等待姓名输入框超时")
-
-            input_success = False
-            for selector in name_selectors:
-                if self.safe_input(selector, fullname):
-                    input_success = True
-                    break
-
-            if not input_success:
-                raise Exception("无法输入姓名")
-
-            time.sleep(1)
-
-            # 点击同意按钮
-            print(f"[注册] 正在点击同意按钮...")
-            agree_selectors = [
-                'xpath://button[contains(@class, "agree-button")]',
-                'xpath://button[contains(., "同意并开始使用")]',
-                'xpath://button[contains(., "同意")]',
-                'button.agree-button',
-            ]
-
-            clicked = False
-            for selector in agree_selectors:
-                if self.wait_and_click(selector, timeout=5):
-                    clicked = True
-                    break
-
-            if not clicked:
-                raise Exception("无法点击同意按钮")
-
-            # 等待页面跳转
-            print(f"[注册] 正在等待页面跳转...")
+            # 同时检查姓名输入框和目标页面
             target_pattern = r'business\.gemini\.google/home/cid/[a-f0-9-]+\?csesidx=\d+'
-            if not self.wait_for_url_pattern(target_pattern, timeout=90):
+            name_input_found = False
+            already_logged_in = False
+
+            # 等待最多15秒，看是姓名输入框出现还是直接跳转到主页
+            max_wait = 15
+            waited = 0
+            while waited < max_wait:
+                # 检查是否已经跳转到目标页面（已注册账号）
                 current_url = self.page.url
-                if '/admin/create' in current_url:
-                    time.sleep(15)
-                    if not self.wait_for_url_pattern(target_pattern, timeout=120):
+                if re.search(target_pattern, current_url):
+                    already_logged_in = True
+                    print(f"[注册] ✓ 账号已注册，直接跳转到主页")
+                    break
+
+                # 检查姓名输入框
+                for selector in name_selectors:
+                    try:
+                        ele = self.page.ele(selector, timeout=1)
+                        if ele:
+                            name_input_found = True
+                            break
+                    except:
+                        pass
+
+                if name_input_found:
+                    break
+
+                time.sleep(1)
+                waited += 1
+
+            # 如果找到姓名输入框，说明是新账号，需要完成注册流程
+            if name_input_found and not already_logged_in:
+                print(f"[注册] 正在输入姓名...")
+                fullname = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=5))
+
+                input_success = False
+                for selector in name_selectors:
+                    if self.safe_input(selector, fullname):
+                        input_success = True
+                        break
+
+                if not input_success:
+                    raise Exception("无法输入姓名")
+
+                time.sleep(1)
+
+                # 点击同意按钮
+                print(f"[注册] 正在点击同意按钮...")
+                agree_selectors = [
+                    'xpath://button[contains(@class, "agree-button")]',
+                    'xpath://button[contains(., "同意并开始使用")]',
+                    'xpath://button[contains(., "同意")]',
+                    'button.agree-button',
+                ]
+
+                clicked = False
+                for selector in agree_selectors:
+                    if self.wait_and_click(selector, timeout=5):
+                        clicked = True
+                        break
+
+                if not clicked:
+                    raise Exception("无法点击同意按钮")
+
+                # 等待页面跳转
+                print(f"[注册] 正在等待页面跳转...")
+                if not self.wait_for_url_pattern(target_pattern, timeout=90):
+                    current_url = self.page.url
+                    if '/admin/create' in current_url:
+                        time.sleep(15)
+                        if not self.wait_for_url_pattern(target_pattern, timeout=120):
+                            raise Exception("页面跳转超时")
+                    else:
                         raise Exception("页面跳转超时")
-                else:
-                    raise Exception("页面跳转超时")
+
+            elif not already_logged_in:
+                # 既没有姓名输入框，也没有跳转到目标页面，尝试等待跳转
+                print(f"[注册] 等待页面跳转（可能是已注册账号）...")
+                if not self.wait_for_url_pattern(target_pattern, timeout=60):
+                    # 最后尝试直接提取 Cookie
+                    print(f"[注册] 尝试直接提取 Cookie...")
 
             time.sleep(3)
 
