@@ -1,3 +1,6 @@
+// Debug: 确认脚本开始加载
+console.log('[index.js] Script loading started...');
+
 // [OPTIMIZATION] 1. 脚本微调以适应新的图标
         function updateThemeIcon(theme) {
             const iconContainer = document.getElementById('themeIconContainer');
@@ -341,6 +344,7 @@
         let selectedAccountIds = new Set();
 
         // 将选择相关函数暴露到全局作用域
+        console.log('[index.js] Defining window.toggleAccountSelection...');
         window.toggleAccountSelection = function(accountId) {
             if (selectedAccountIds.has(accountId)) {
                 selectedAccountIds.delete(accountId);
@@ -356,6 +360,7 @@
             }
         };
 
+        console.log('[index.js] Defining window.toggleSelectAll...');
         window.toggleSelectAll = function() {
             const selectAllCheckbox = document.getElementById('selectAllAccounts');
             const isChecked = selectAllCheckbox.checked;
