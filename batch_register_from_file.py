@@ -433,7 +433,37 @@ class DrissionPageWorker:
             if not clicked:
                 raise Exception("无法点击继续按钮")
 
-            time.sleep(2)
+            # 等待页面跳转到验证码输入页面
+            print(f"[注册] 正在等待页面跳转到验证码输入页面...")
+            code_input_selectors = [
+                'xpath://input[@name="pinInput"]',
+                'xpath://input[contains(@aria-label, "验证码")]',
+                'input[name="pinInput"]',
+            ]
+
+            # 等待验证码输入框出现（最多60秒）
+            code_input_found = False
+            max_wait = 60
+            waited = 0
+            while waited < max_wait:
+                for selector in code_input_selectors:
+                    try:
+                        ele = self.page.ele(selector, timeout=2)
+                        if ele:
+                            code_input_found = True
+                            print(f"[注册] ✓ 验证码输入框已出现")
+                            break
+                    except:
+                        pass
+                if code_input_found:
+                    break
+                time.sleep(2)
+                waited += 2
+                if waited % 10 == 0:
+                    print(f"[注册] 等待验证码输入框... ({waited}/{max_wait}秒)")
+
+            if not code_input_found:
+                raise Exception("等待验证码输入框超时")
 
             # 获取验证码（使用 API 方式）
             print(f"[注册] 正在等待验证码...")
@@ -451,17 +481,21 @@ class DrissionPageWorker:
 
             # 输入验证码
             print(f"[注册] 正在输入验证码...")
-            code_input_selectors = [
-                'xpath://input[@name="pinInput"]',
-                'xpath://input[contains(@aria-label, "验证码")]',
-                'input[name="pinInput"]',
-            ]
-
             input_success = False
             for selector in code_input_selectors:
-                if self.safe_input(selector, verification_code):
-                    input_success = True
-                    break
+                try:
+                    ele = self.page.ele(selector, timeout=5)
+                    if ele:
+                        ele.clear()
+                        time.sleep(0.3)
+                        ele.input(verification_code)
+                        time.sleep(0.5)
+                        print(f"[注册] ✓ 验证码输入成功")
+                        input_success = True
+                        break
+                except Exception as e:
+                    print(f"[注册] 输入验证码尝试失败: {e}")
+                    continue
 
             if not input_success:
                 raise Exception("无法输入验证码")
