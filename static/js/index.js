@@ -462,6 +462,47 @@
             await loadAccounts();
         };
 
+        /**
+         * 更新全选复选框状态
+         */
+        function updateSelectAllCheckbox() {
+            const selectAllCheckbox = document.getElementById('selectAllAccounts');
+            if (!selectAllCheckbox) return;
+
+            // 获取可选账号数量（有 tempmail_url 的）
+            const selectableAccounts = accountsData.filter(acc => acc.tempmail_url && acc.tempmail_url.length > 0);
+            const selectedFromSelectable = selectableAccounts.filter(acc => selectedAccountIds.has(acc.id));
+
+            if (selectableAccounts.length === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedFromSelectable.length === selectableAccounts.length) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedFromSelectable.length > 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }
+        }
+
+        /**
+         * 更新选中数量显示
+         */
+        function updateSelectedCount() {
+            const countEl = document.getElementById('selectedCount');
+            const btn = document.getElementById('batchRefreshBtn');
+            const count = selectedAccountIds.size;
+
+            if (countEl) countEl.textContent = count;
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.title = count === 0 ? '请先选择要刷新的账号' : `刷新 ${count} 个选中的账号`;
+            }
+        }
+
         function renderAccounts() {
             const tbody = document.getElementById('accountsTableBody');
             if (!tbody) return;
