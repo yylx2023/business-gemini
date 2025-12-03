@@ -4,7 +4,7 @@ import os
 import time
 import re
 import threading
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from datetime import datetime
 
 # 从 config 导入 Playwright 可用性标志
@@ -18,6 +18,56 @@ from .account_manager import account_manager
 
 # 用于通知自动刷新线程立即检查过期账号的事件
 _immediate_refresh_event = threading.Event()
+
+# ============================================================
+# Cookie 检测状态跟踪
+# ============================================================
+
+# 默认配置值
+DEFAULT_CHECK_INTERVAL = 15 * 60  # 15 分钟
+DEFAULT_RETRY_DELAY = 5 * 60  # 5 分钟
+DEFAULT_CHECK_ON_STARTUP = True
+
+# 检测状态（线程安全）
+_check_status_lock = threading.Lock()
+_check_status = {
+    "is_running": False,           # 后台线程是否运行中
+    "is_checking": False,          # 当前是否正在检测
+    "last_check_time": None,       # 上次检测时间（timestamp）
+    "next_check_time": None,       # 下次检测时间（timestamp）
+    "check_count": 0,              # 总检测次数
+    "last_check_result": None,     # 上次检测结果
+    "current_interval": DEFAULT_CHECK_INTERVAL,  # 当前检测间隔
+    "accounts_checked": 0,         # 上次检测的账号数
+    "accounts_expired": 0,         # 上次检测发现的过期账号数
+    "accounts_refreshed": 0,       # 上次刷新成功的账号数
+    "refresh_in_progress": False,  # 是否正在刷新
+    "refresh_queue": [],           # 刷新队列
+}
+
+
+def get_check_status() -> dict:
+    """获取当前检测状态（线程安全）"""
+    with _check_status_lock:
+        status = dict(_check_status)
+        # 转换时间戳为 ISO 格式
+        if status["last_check_time"]:
+            status["last_check_time_iso"] = datetime.fromtimestamp(status["last_check_time"]).isoformat()
+        else:
+            status["last_check_time_iso"] = None
+        if status["next_check_time"]:
+            status["next_check_time_iso"] = datetime.fromtimestamp(status["next_check_time"]).isoformat()
+            status["seconds_until_next"] = max(0, int(status["next_check_time"] - time.time()))
+        else:
+            status["next_check_time_iso"] = None
+            status["seconds_until_next"] = None
+        return status
+
+
+def _update_check_status(**kwargs):
+    """更新检测状态（内部使用）"""
+    with _check_status_lock:
+        _check_status.update(kwargs)
 
 
 def refresh_cookie_with_browser(account: dict, proxy: Optional[str] = None) -> Optional[Dict[str, str]]:
@@ -1403,39 +1453,84 @@ def auto_refresh_expired_cookies_worker():
     """
     后台线程：定期检查过期的 Cookie，使用临时邮箱自动刷新
     这是主要的 Cookie 自动刷新机制，通过临时邮箱登录来更新过期的 Cookie
+
+    配置项：
+    - cookie_check_interval: 检测间隔（秒），默认 900（15分钟）
+    - cookie_check_on_startup: 启动时是否立即检测，默认 True
+    - cookie_refresh_retry_delay: 刷新失败后重试延迟（秒），默认 300（5分钟）
     """
     if not PLAYWRIGHT_AVAILABLE:
-        print("[提示] Playwright 未安装，Cookie 自动刷新功能已禁用")
+        print("[Cookie 检测] ⚠ Playwright 未安装，Cookie 自动刷新功能已禁用")
+        _update_check_status(is_running=False, last_check_result="Playwright 未安装")
         return
-    
+
     if not PLAYWRIGHT_BROWSER_INSTALLED:
-        print("[提示] Playwright 浏览器未安装，Cookie 自动刷新功能已禁用")
+        print("[Cookie 检测] ⚠ Playwright 浏览器未安装，Cookie 自动刷新功能已禁用")
+        _update_check_status(is_running=False, last_check_result="Playwright 浏览器未安装")
         return
-    
+
     # 等待一下，让主程序完全启动
     time.sleep(10)
-    
+
     # 检查配置是否启用自动刷新
     auto_refresh_enabled = account_manager.config.get("auto_refresh_cookie", False)
     if not auto_refresh_enabled:
-        print("[提示] 自动刷新 Cookie 功能未启用（在系统设置中启用）")
+        print("[Cookie 检测] ⚠ 自动刷新 Cookie 功能未启用（在系统设置中启用）")
+        _update_check_status(is_running=False, last_check_result="功能未启用")
         return
-    
-    print("[Cookie 自动刷新] 后台线程已启动，将每30分钟检查一次过期的 Cookie")
-    
-    # 检查间隔：30分钟
-    CHECK_INTERVAL = 30 * 60
-    
-    # 记录上次检查时间，用于日志
+
+    # 从配置读取检测间隔，默认 15 分钟
+    check_interval = account_manager.config.get("cookie_check_interval", DEFAULT_CHECK_INTERVAL)
+    check_on_startup = account_manager.config.get("cookie_check_on_startup", DEFAULT_CHECK_ON_STARTUP)
+    retry_delay = account_manager.config.get("cookie_refresh_retry_delay", DEFAULT_RETRY_DELAY)
+
+    # 格式化时间显示
+    def format_seconds(seconds: int) -> str:
+        if seconds >= 3600:
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            return f"{hours}小时{minutes}分钟" if minutes > 0 else f"{hours}小时"
+        elif seconds >= 60:
+            return f"{seconds // 60}分钟"
+        else:
+            return f"{seconds}秒"
+
+    print(f"[Cookie 检测] ✓ 后台检测线程已启动")
+    print(f"[Cookie 检测]   - 检测间隔: {format_seconds(check_interval)}")
+    print(f"[Cookie 检测]   - 启动时立即检测: {'是' if check_on_startup else '否'}")
+    print(f"[Cookie 检测]   - 刷新失败重试延迟: {format_seconds(retry_delay)}")
+
+    # 更新状态
+    _update_check_status(
+        is_running=True,
+        current_interval=check_interval,
+        last_check_result="线程已启动"
+    )
+
+    # 记录上次检查时间
     last_check_time = time.time()
     check_count = 0
-    
-    def _check_and_refresh_expired():
-        """检查并刷新过期账号的内部函数"""
+
+    def _check_and_refresh_expired(trigger_source: str = "定时"):
+        """检查并刷新过期账号的内部函数
+
+        Args:
+            trigger_source: 触发来源（"定时"、"立即"、"启动"）
+        """
+        nonlocal last_check_time, check_count
+
+        check_start_time = time.time()
+        _update_check_status(is_checking=True, last_check_time=check_start_time)
+
         expired_count = 0
         expired_indices = []
         total_accounts = 0
-        
+        verified_count = 0
+        healthy_count = 0
+
+        print(f"[Cookie 检测] ─────────────────────────────────────────")
+        print(f"[Cookie 检测] 📋 开始第 {check_count + 1} 次检测（触发: {trigger_source}）")
+
         # 先检查标记为过期的账号
         with account_manager.lock:
             total_accounts = len(account_manager.accounts)
@@ -1443,27 +1538,32 @@ def auto_refresh_expired_cookies_worker():
                 if acc.get("cookie_expired", False):
                     expired_count += 1
                     expired_indices.append(idx)
-        
+
+        print(f"[Cookie 检测] 📊 共 {total_accounts} 个账号，{expired_count} 个已标记过期")
+
         # 实际验证 cookie：对于标记为有效的账号，实际测试 cookie 是否真的有效
-        print(f"[Cookie 自动刷新] 开始验证 Cookie 有效性...")
+        print(f"[Cookie 检测] 🔍 开始验证未标记账号的 Cookie 有效性...")
         from .utils import get_proxy
         from .jwt_utils import get_jwt_for_account
         from .exceptions import AccountAuthError, AccountRequestError
-        
+
         proxy = get_proxy()
         verified_expired = []
-        
+
         for idx, acc in enumerate(account_manager.accounts):
             # 跳过已经标记为过期的账号
             if acc.get("cookie_expired", False):
                 continue
-            
+
+            verified_count += 1
+            tempmail_name = acc.get("tempmail_name", f"账号{idx}")
+
             # 检查是否有必要的 cookie 字段
             secure_c_ses = acc.get("secure_c_ses", "").strip()
             csesidx = acc.get("csesidx", "").strip()
             if not secure_c_ses or not csesidx:
                 # Cookie 字段不完整，标记为过期
-                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 字段不完整，标记为过期")
+                print(f"[Cookie 检测]   ✗ 账号 {idx} ({tempmail_name}): Cookie 字段不完整")
                 with account_manager.lock:
                     acc["cookie_expired"] = True
                     acc["cookie_expired_time"] = datetime.now().isoformat()
@@ -1475,16 +1575,17 @@ def auto_refresh_expired_cookies_worker():
                     expired_indices.append(idx)
                 verified_expired.append(idx)
                 continue
-            
+
             # 实际验证 cookie：尝试获取 JWT
             try:
                 test_jwt = get_jwt_for_account(acc, proxy)
                 # 验证成功，cookie 有效
-                # print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证成功")
+                healthy_count += 1
+                print(f"[Cookie 检测]   ✓ 账号 {idx} ({tempmail_name}): Cookie 有效")
             except (AccountAuthError, AccountRequestError, ValueError) as e:
                 # Cookie 验证失败，标记为过期
                 error_msg = str(e)
-                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证失败 - {error_msg}，标记为过期")
+                print(f"[Cookie 检测]   ✗ 账号 {idx} ({tempmail_name}): Cookie 失效 - {error_msg[:50]}")
                 with account_manager.lock:
                     acc["cookie_expired"] = True
                     acc["cookie_expired_time"] = datetime.now().isoformat()
@@ -1497,18 +1598,32 @@ def auto_refresh_expired_cookies_worker():
                 verified_expired.append(idx)
             except Exception as e:
                 # 其他异常，记录但不标记为过期（可能是网络问题等）
-                print(f"[Cookie 自动刷新] 账号 {idx}: Cookie 验证时发生异常（可能是网络问题）: {e}")
+                print(f"[Cookie 检测]   ⚠ 账号 {idx} ({tempmail_name}): 验证异常（可能网络问题）: {e}")
+
+        # 检测完成，更新统计
+        check_duration = time.time() - check_start_time
+        check_count += 1
+
+        print(f"[Cookie 检测] ─────────────────────────────────────────")
+        print(f"[Cookie 检测] 📊 检测完成（耗时 {check_duration:.1f} 秒）")
+        print(f"[Cookie 检测]   - 总账号数: {total_accounts}")
+        print(f"[Cookie 检测]   - 已验证: {verified_count} 个")
+        print(f"[Cookie 检测]   - 健康: {healthy_count} 个")
+        print(f"[Cookie 检测]   - 过期: {expired_count} 个 {f'(账号: {expired_indices})' if expired_indices else ''}")
         
-        if verified_expired:
-            print(f"[Cookie 自动刷新] 通过实际验证发现 {len(verified_expired)} 个账号 Cookie 已失效: {verified_expired}")
-        
-        current_time = time.time()
-        time_since_last = int(current_time - last_check_time)
-        print(f"[Cookie 自动刷新] 检查: 共 {total_accounts} 个账号，{expired_count} 个过期 {f'(账号: {expired_indices})' if expired_indices else ''}")
-        
+        # 更新状态
+        _update_check_status(
+            is_checking=False,
+            accounts_checked=verified_count,
+            accounts_expired=expired_count,
+            last_check_result=f"检测完成: {healthy_count} 健康, {expired_count} 过期"
+        )
+
+        refreshed_count = 0
         if expired_count > 0:
-            print(f"[Cookie 自动刷新] 检测到 {expired_count} 个过期的账号，开始自动刷新...")
-            
+            print(f"[Cookie 刷新] 🔄 开始刷新 {expired_count} 个过期账号...")
+            _update_check_status(refresh_in_progress=True, refresh_queue=expired_indices.copy())
+
             # 导入并调用批量刷新函数（使用 DrissionPage）
             try:
                 import sys
@@ -1528,57 +1643,91 @@ def auto_refresh_expired_cookies_worker():
                 # 确定 headless 模式
                 if force_headed:
                     use_headless = False  # 强制有头模式
+                    print(f"[Cookie 刷新]   使用有头模式（环境变量 FORCE_HEADED=1）")
                 elif force_headless:
                     use_headless = True  # 强制无头模式
+                    print(f"[Cookie 刷新]   使用无头模式（环境变量 FORCE_HEADLESS=1）")
                 else:
                     use_headless = True  # 默认无头模式（后台线程）
+                    print(f"[Cookie 刷新]   使用无头模式（默认）")
 
+                refresh_start_time = time.time()
                 refresh_expired_accounts_drission(headless=use_headless)
+                refresh_duration = time.time() - refresh_start_time
 
-                print("[Cookie 自动刷新] 批量刷新完成")
+                print(f"[Cookie 刷新] ✓ 批量刷新完成（耗时 {refresh_duration:.1f} 秒）")
 
                 # 重新加载配置，获取最新的账号状态
                 account_manager.load_config()
 
+                # 统计刷新成功的账号数
+                with account_manager.lock:
+                    for idx in expired_indices:
+                        if idx < len(account_manager.accounts):
+                            if not account_manager.accounts[idx].get("cookie_expired", False):
+                                refreshed_count += 1
+
+                print(f"[Cookie 刷新] 📊 刷新结果: {refreshed_count}/{expired_count} 成功")
+
             except ImportError as e:
-                print(f"[Cookie 自动刷新] ✗ 导入刷新模块失败: {e}")
-                print("    请确保 drission_worker.py 文件存在")
+                print(f"[Cookie 刷新] ✗ 导入刷新模块失败: {e}")
+                print(f"[Cookie 刷新]   请确保 drission_worker.py 文件存在")
             except Exception as e:
-                print(f"[Cookie 自动刷新] ✗ 刷新过程出错: {e}")
+                print(f"[Cookie 刷新] ✗ 刷新过程出错: {e}")
                 import traceback
                 traceback.print_exc()
-        
+            finally:
+                _update_check_status(refresh_in_progress=False, refresh_queue=[], accounts_refreshed=refreshed_count)
+        else:
+            print(f"[Cookie 检测] ✓ 所有账号 Cookie 均有效，无需刷新")
+
+        # 更新时间
+        last_check_time = time.time()
+
         return expired_count
-    
+
+    # 启动时是否立即检测
+    if check_on_startup:
+        print(f"[Cookie 检测] ⚡ 启动时立即执行首次检测...")
+        _check_and_refresh_expired("启动")
+
+    # 计算下次检测时间
+    next_check = time.time() + check_interval
+    _update_check_status(next_check_time=next_check)
+    print(f"[Cookie 检测] ⏰ 下次定期检测时间: {datetime.fromtimestamp(next_check).strftime('%H:%M:%S')}")
+
     while True:
         try:
+            # 重新从配置读取检测间隔（支持动态调整）
+            check_interval = account_manager.config.get("cookie_check_interval", DEFAULT_CHECK_INTERVAL)
+            _update_check_status(current_interval=check_interval)
+
             # 等待立即刷新事件或定期检查时间
-            # 使用 wait 的超时功能，既能响应立即刷新，又能定期检查
-            event_set = _immediate_refresh_event.wait(timeout=CHECK_INTERVAL)
-            
+            event_set = _immediate_refresh_event.wait(timeout=check_interval)
+
             if event_set:
                 # 立即刷新事件被触发，清除事件并立即检查
                 _immediate_refresh_event.clear()
-                check_count += 1
-                print(f"[Cookie 自动刷新] ⚡ 收到立即刷新通知，立即检查过期账号...")
-                _check_and_refresh_expired()
-                last_check_time = time.time()
+                print(f"[Cookie 检测] ⚡ 收到立即刷新通知")
+                _check_and_refresh_expired("立即")
             else:
                 # 定期检查时间到了
-                check_count += 1
-                current_time = time.time()
-                time_since_last = int(current_time - last_check_time)
-                print(f"[Cookie 自动刷新] 第 {check_count} 次定期检查（距上次 {time_since_last} 秒）")
-                _check_and_refresh_expired()
-                last_check_time = current_time
-            
+                _check_and_refresh_expired("定时")
+
+            # 更新下次检测时间
+            next_check = time.time() + check_interval
+            _update_check_status(next_check_time=next_check)
+            print(f"[Cookie 检测] ⏰ 下次检测时间: {datetime.fromtimestamp(next_check).strftime('%H:%M:%S')} ({format_seconds(check_interval)}后)")
+
         except KeyboardInterrupt:
-            print("[Cookie 自动刷新] 线程被中断")
+            print("[Cookie 检测] 线程被中断")
+            _update_check_status(is_running=False, last_check_result="线程被中断")
             break
         except Exception as e:
-            print(f"[Cookie 自动刷新] 线程出错: {e}")
+            print(f"[Cookie 检测] ✗ 线程出错: {e}")
             import traceback
             traceback.print_exc()
+            _update_check_status(last_check_result=f"出错: {str(e)[:50]}")
             # 出错后等待一段时间再继续
             time.sleep(60)
 

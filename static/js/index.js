@@ -365,14 +365,12 @@ console.log('[index.js] Script loading started...');
             const selectAllCheckbox = document.getElementById('selectAllAccounts');
             const isChecked = selectAllCheckbox.checked;
 
-            // 只选中可以刷新的账号（有 tempmail_url 的）
+            // 选中所有账号（批量测试不需要 tempmail_url）
             accountsData.forEach(acc => {
-                if (acc.tempmail_url && acc.tempmail_url.length > 0) {
-                    if (isChecked) {
-                        selectedAccountIds.add(acc.id);
-                    } else {
-                        selectedAccountIds.delete(acc.id);
-                    }
+                if (isChecked) {
+                    selectedAccountIds.add(acc.id);
+                } else {
+                    selectedAccountIds.delete(acc.id);
                 }
             });
 
@@ -387,7 +385,24 @@ console.log('[index.js] Script loading started...');
                 return;
             }
 
-            const confirmMsg = `确定要批量刷新 ${count} 个选中的账号吗？\n\n这将：\n1. 使用每个账号关联的临时邮箱\n2. 自动完成验证码验证\n3. 更新 Cookie 信息\n\n每个账号刷新成功后才会开始下一个。`;
+            // 过滤出有 tempmail_url 的账号
+            const refreshableIds = Array.from(selectedAccountIds).filter(id => {
+                const acc = accountsData.find(a => a.id === id);
+                return acc && acc.tempmail_url && acc.tempmail_url.length > 0;
+            });
+
+            if (refreshableIds.length === 0) {
+                showToast('选中的账号均无临时邮箱URL，无法批量刷新', 'warning');
+                return;
+            }
+
+            const skippedCount = count - refreshableIds.length;
+            let confirmMsg = `确定要批量刷新 ${refreshableIds.length} 个账号吗？`;
+            if (skippedCount > 0) {
+                confirmMsg += `\n\n注意：${skippedCount} 个账号因无临时邮箱URL将被跳过。`;
+            }
+            confirmMsg += `\n\n这将：\n1. 使用每个账号关联的临时邮箱\n2. 自动完成验证码验证\n3. 更新 Cookie 信息\n\n每个账号刷新成功后才会开始下一个。`;
+
             if (!confirm(confirmMsg)) {
                 return;
             }
@@ -396,7 +411,7 @@ console.log('[index.js] Script loading started...');
             const originalText = btn.innerHTML;
             btn.disabled = true;
 
-            const accountIds = Array.from(selectedAccountIds);
+            const accountIds = refreshableIds;
             let successCount = 0;
             let failCount = 0;
             let shouldStop = false;
@@ -468,23 +483,112 @@ console.log('[index.js] Script loading started...');
         };
 
         /**
+         * 批量测试账号连接
+         */
+        window.batchTestAccounts = async function() {
+            const count = selectedAccountIds.size;
+            if (count === 0) {
+                showToast('请先选择要测试的账号', 'warning');
+                return;
+            }
+
+            const confirmMsg = `确定要批量测试 ${count} 个选中的账号吗？\n\n这将逐个测试每个账号的 Cookie 是否有效。`;
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            const btn = document.getElementById('batchTestBtn');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+
+            const accountIds = Array.from(selectedAccountIds);
+            let successCount = 0;
+            let failCount = 0;
+            let shouldStop = false;
+
+            for (let i = 0; i < accountIds.length; i++) {
+                if (shouldStop) break;
+
+                const accountId = accountIds[i];
+                const acc = accountsData.find(a => a.id === accountId);
+                const displayName = acc?.tempmail_name || `账号 ${accountId}`;
+
+                // 更新按钮显示进度
+                btn.innerHTML = `<svg class="icon spin"><use xlink:href="#icon-refresh-cw"></use></svg> 测试中 (${i + 1}/${accountIds.length})`;
+
+                try {
+                    const headers = Object.assign({}, { 'Content-Type': 'application/json' }, getAuthHeaders());
+                    const res = await fetch(`${API_BASE}/api/accounts/${accountId}/test`, {
+                        method: 'GET',
+                        headers: headers
+                    });
+
+                    // 处理认证失败
+                    if (res.status === 401 || res.status === 403) {
+                        showToast('登录已过期，请重新登录', 'error');
+                        localStorage.removeItem(ADMIN_TOKEN_KEY);
+                        shouldStop = true;
+                        break;
+                    }
+
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        successCount++;
+                        showToast(`${displayName} 测试成功!`, 'success');
+                    } else {
+                        failCount++;
+                        const errorMsg = data.error || data.detail || '未知错误';
+                        showToast(`${displayName} 测试失败: ${errorMsg}`, 'error');
+                    }
+                } catch (e) {
+                    failCount++;
+                    showToast(`${displayName} 测试失败: ${e.message}`, 'error');
+                    console.error(`批量测试账号 ${accountId} 时出错:`, e);
+                }
+
+                // 如果还有下一个账号要测试，等待一小段时间
+                if (i < accountIds.length - 1 && !shouldStop) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+
+            // 显示最终结果
+            if (count > 1) {
+                if (failCount === 0) {
+                    showToast(`批量测试完成！${successCount} 个账号全部可用`, 'success');
+                } else if (successCount === 0) {
+                    showToast(`批量测试完成：${failCount} 个账号全部不可用`, 'error');
+                } else {
+                    showToast(`批量测试完成：${successCount} 个可用，${failCount} 个不可用`, 'warning');
+                }
+            }
+
+            // 恢复按钮状态
+            btn.innerHTML = originalText;
+            btn.disabled = selectedAccountIds.size === 0;
+
+            // 刷新账号列表以更新状态
+            await loadAccounts();
+        };
+
+        /**
          * 更新全选复选框状态
          */
         function updateSelectAllCheckbox() {
             const selectAllCheckbox = document.getElementById('selectAllAccounts');
             if (!selectAllCheckbox) return;
 
-            // 获取可选账号数量（有 tempmail_url 的）
-            const selectableAccounts = accountsData.filter(acc => acc.tempmail_url && acc.tempmail_url.length > 0);
-            const selectedFromSelectable = selectableAccounts.filter(acc => selectedAccountIds.has(acc.id));
+            // 检查所有账号的选中状态
+            const totalAccounts = accountsData.length;
+            const selectedCount = accountsData.filter(acc => selectedAccountIds.has(acc.id)).length;
 
-            if (selectableAccounts.length === 0) {
+            if (totalAccounts === 0) {
                 selectAllCheckbox.checked = false;
                 selectAllCheckbox.indeterminate = false;
-            } else if (selectedFromSelectable.length === selectableAccounts.length) {
+            } else if (selectedCount === totalAccounts) {
                 selectAllCheckbox.checked = true;
                 selectAllCheckbox.indeterminate = false;
-            } else if (selectedFromSelectable.length > 0) {
+            } else if (selectedCount > 0) {
                 selectAllCheckbox.checked = false;
                 selectAllCheckbox.indeterminate = true;
             } else {
@@ -498,13 +602,18 @@ console.log('[index.js] Script loading started...');
          */
         function updateSelectedCount() {
             const countEl = document.getElementById('selectedCount');
-            const btn = document.getElementById('batchRefreshBtn');
+            const refreshBtn = document.getElementById('batchRefreshBtn');
+            const testBtn = document.getElementById('batchTestBtn');
             const count = selectedAccountIds.size;
 
             if (countEl) countEl.textContent = count;
-            if (btn) {
-                btn.disabled = count === 0;
-                btn.title = count === 0 ? '请先选择要刷新的账号' : `刷新 ${count} 个选中的账号`;
+            if (refreshBtn) {
+                refreshBtn.disabled = count === 0;
+                refreshBtn.title = count === 0 ? '请先选择要刷新的账号' : `刷新 ${count} 个选中的账号`;
+            }
+            if (testBtn) {
+                testBtn.disabled = count === 0;
+                testBtn.title = count === 0 ? '请先选择要测试的账号' : `测试 ${count} 个选中的账号`;
             }
         }
 
@@ -628,7 +737,7 @@ console.log('[index.js] Script loading started...');
                                class="account-checkbox"
                                data-id="${acc.id}"
                                ${isSelected ? 'checked' : ''}
-                               ${canRefresh ? '' : 'disabled title="无临时邮箱URL，无法批量刷新"'}
+                               title="${canRefresh ? '可批量刷新和测试' : '仅可批量测试（无临时邮箱URL）'}"
                                onchange="toggleAccountSelection(${acc.id})">
                     </td>
                     <td>${index + 1}</td>
@@ -1344,7 +1453,14 @@ console.log('[index.js] Script loading started...');
                     document.getElementById('apiUrl').value = configData.service.api_url || 'http://localhost:8000/v1';
                 }
                 
-                updateAutoRefreshStatus();
+                // 更新自动刷新 UI
+                const autoRefreshEnabled = configData.auto_refresh_cookie || false;
+                updateAutoRefreshUI(autoRefreshEnabled);
+                if (autoRefreshEnabled) {
+                    loadCookieCheckConfig();
+                    loadCookieCheckStatus();
+                    startCookieCheckStatusRefresh();
+                }
             } catch (e) {
                 showToast('加载配置失败: ' + e.message, 'error');
             }
@@ -1362,25 +1478,166 @@ console.log('[index.js] Script loading started...');
                     throw new Error('保存失败');
                 }
                 showToast(enabled ? '已启用自动刷新 Cookie' : '已禁用自动刷新 Cookie', 'success');
-                updateAutoRefreshStatus();
+                updateAutoRefreshUI(enabled);
+                if (enabled) {
+                    loadCookieCheckConfig();
+                    loadCookieCheckStatus();
+                }
             } catch (e) {
                 showToast('设置失败: ' + e.message, 'error');
                 document.getElementById('autoRefreshCookie').checked = !enabled;
             }
         }
 
-        function updateAutoRefreshStatus() {
-            const enabled = document.getElementById('autoRefreshCookie').checked;
+        function updateAutoRefreshUI(enabled) {
             const statusDiv = document.getElementById('autoRefreshStatus');
             const statusText = document.getElementById('autoRefreshStatusText');
-            
+            const configDiv = document.getElementById('cookieCheckConfig');
+            const checkStatusDiv = document.getElementById('cookieCheckStatus');
+
             if (enabled) {
                 statusDiv.style.display = 'block';
-                statusText.innerHTML = '✓ 自动刷新已启用，系统将每30分钟检查一次过期 Cookie，使用临时邮箱自动刷新';
+                statusText.innerHTML = '✓ 自动刷新已启用';
                 statusDiv.style.background = 'var(--success-light)';
+                configDiv.style.display = 'block';
+                checkStatusDiv.style.display = 'block';
             } else {
                 statusDiv.style.display = 'none';
+                configDiv.style.display = 'none';
+                checkStatusDiv.style.display = 'none';
             }
+        }
+
+        async function loadCookieCheckConfig() {
+            try {
+                const res = await apiFetch(`${API_BASE}/api/cookie-check/config`);
+                if (res.ok) {
+                    const config = await res.json();
+                    document.getElementById('cookieCheckInterval').value = Math.floor(config.cookie_check_interval / 60);
+                    document.getElementById('cookieRefreshRetryDelay').value = Math.floor(config.cookie_refresh_retry_delay / 60);
+                    document.getElementById('cookieCheckOnStartup').checked = config.cookie_check_on_startup;
+                }
+            } catch (e) {
+                console.warn('加载 Cookie 检测配置失败:', e);
+            }
+        }
+
+        async function saveCookieCheckConfig() {
+            const interval = parseInt(document.getElementById('cookieCheckInterval').value) * 60;
+            const retryDelay = parseInt(document.getElementById('cookieRefreshRetryDelay').value) * 60;
+            const onStartup = document.getElementById('cookieCheckOnStartup').checked;
+
+            try {
+                const res = await apiFetch(`${API_BASE}/api/cookie-check/config`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        cookie_check_interval: interval,
+                        cookie_refresh_retry_delay: retryDelay,
+                        cookie_check_on_startup: onStartup
+                    })
+                });
+                if (res.ok) {
+                    showToast('Cookie 检测配置已保存', 'success');
+                } else {
+                    const data = await res.json();
+                    showToast('保存失败: ' + (data.error || '未知错误'), 'error');
+                }
+            } catch (e) {
+                showToast('保存失败: ' + e.message, 'error');
+            }
+        }
+
+        async function loadCookieCheckStatus() {
+            try {
+                const res = await apiFetch(`${API_BASE}/api/cookie-check/status`);
+                if (res.ok) {
+                    const status = await res.json();
+                    updateCookieCheckStatusUI(status);
+                }
+            } catch (e) {
+                console.warn('加载 Cookie 检测状态失败:', e);
+            }
+        }
+
+        function updateCookieCheckStatusUI(status) {
+            // 运行状态
+            const runningEl = document.getElementById('checkStatusRunning');
+            if (status.is_running) {
+                if (status.is_checking) {
+                    runningEl.innerHTML = '<span style="color: var(--warning);">🔍 检测中...</span>';
+                } else if (status.refresh_in_progress) {
+                    runningEl.innerHTML = '<span style="color: var(--warning);">🔄 刷新中...</span>';
+                } else {
+                    runningEl.innerHTML = '<span style="color: var(--success);">✓ 运行中</span>';
+                }
+            } else {
+                runningEl.innerHTML = '<span style="color: var(--text-muted);">未运行</span>';
+            }
+
+            // 检测次数
+            document.getElementById('checkStatusCount').textContent = status.check_count || 0;
+
+            // 上次检测时间
+            const lastTimeEl = document.getElementById('checkStatusLastTime');
+            if (status.last_check_time_iso) {
+                const lastTime = new Date(status.last_check_time_iso);
+                lastTimeEl.textContent = lastTime.toLocaleTimeString('zh-CN');
+            } else {
+                lastTimeEl.textContent = '-';
+            }
+
+            // 下次检测时间
+            const nextTimeEl = document.getElementById('checkStatusNextTime');
+            if (status.next_check_time_iso && status.seconds_until_next !== null) {
+                const nextTime = new Date(status.next_check_time_iso);
+                const minutes = Math.floor(status.seconds_until_next / 60);
+                const seconds = status.seconds_until_next % 60;
+                nextTimeEl.textContent = `${nextTime.toLocaleTimeString('zh-CN')} (${minutes}分${seconds}秒后)`;
+            } else {
+                nextTimeEl.textContent = '-';
+            }
+
+            // 最近结果
+            const resultEl = document.getElementById('checkStatusResult');
+            resultEl.textContent = status.last_check_result || '-';
+        }
+
+        async function triggerCookieCheck() {
+            const btn = document.getElementById('triggerCheckBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="icon spin" style="width: 14px; height: 14px;"><use xlink:href="#icon-refresh"></use></svg> 触发中...';
+
+            try {
+                const res = await apiFetch(`${API_BASE}/api/cookie-check/trigger`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || '已触发检测', 'success');
+                    // 延迟后刷新状态
+                    setTimeout(loadCookieCheckStatus, 2000);
+                } else {
+                    showToast(data.error || '触发失败', 'error');
+                }
+            } catch (e) {
+                showToast('触发失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg class="icon" style="width: 14px; height: 14px;"><use xlink:href="#icon-play"></use></svg> 立即检测';
+            }
+        }
+
+        // 定时刷新检测状态
+        let cookieCheckStatusInterval = null;
+        function startCookieCheckStatusRefresh() {
+            if (cookieCheckStatusInterval) return;
+            cookieCheckStatusInterval = setInterval(() => {
+                const enabled = document.getElementById('autoRefreshCookie')?.checked;
+                if (enabled) {
+                    loadCookieCheckStatus();
+                }
+            }, 30000); // 每30秒刷新一次
         }
 
         async function loadLogLevel() {

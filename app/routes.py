@@ -2015,3 +2015,106 @@ def register_routes(app):
         config.pop("api_tokens", None)  # 已废弃，使用新的 API 密钥管理系统
         return jsonify(config)
 
+    # ============================================================
+    # Cookie 检测配置和状态接口
+    # ============================================================
+
+    @app.route('/api/cookie-check/status', methods=['GET'])
+    @require_admin
+    def get_cookie_check_status():
+        """获取 Cookie 检测状态"""
+        from .cookie_refresh import get_check_status
+        status = get_check_status()
+
+        # 添加配置信息
+        status["config"] = {
+            "auto_refresh_cookie": account_manager.config.get("auto_refresh_cookie", False),
+            "cookie_check_interval": account_manager.config.get("cookie_check_interval", 900),
+            "cookie_check_on_startup": account_manager.config.get("cookie_check_on_startup", True),
+            "cookie_refresh_retry_delay": account_manager.config.get("cookie_refresh_retry_delay", 300),
+        }
+
+        return jsonify(status)
+
+    @app.route('/api/cookie-check/config', methods=['GET'])
+    @require_admin
+    def get_cookie_check_config():
+        """获取 Cookie 检测配置"""
+        return jsonify({
+            "auto_refresh_cookie": account_manager.config.get("auto_refresh_cookie", False),
+            "cookie_check_interval": account_manager.config.get("cookie_check_interval", 900),
+            "cookie_check_on_startup": account_manager.config.get("cookie_check_on_startup", True),
+            "cookie_refresh_retry_delay": account_manager.config.get("cookie_refresh_retry_delay", 300),
+        })
+
+    @app.route('/api/cookie-check/config', methods=['PUT'])
+    @require_admin
+    def update_cookie_check_config():
+        """更新 Cookie 检测配置"""
+        data = request.json or {}
+
+        # 验证并更新配置
+        updated_fields = []
+
+        if "auto_refresh_cookie" in data:
+            account_manager.config["auto_refresh_cookie"] = bool(data["auto_refresh_cookie"])
+            updated_fields.append("auto_refresh_cookie")
+
+        if "cookie_check_interval" in data:
+            interval = int(data["cookie_check_interval"])
+            if interval < 60:
+                return jsonify({"error": "检测间隔不能小于 60 秒"}), 400
+            if interval > 86400:
+                return jsonify({"error": "检测间隔不能大于 24 小时"}), 400
+            account_manager.config["cookie_check_interval"] = interval
+            updated_fields.append("cookie_check_interval")
+
+        if "cookie_check_on_startup" in data:
+            account_manager.config["cookie_check_on_startup"] = bool(data["cookie_check_on_startup"])
+            updated_fields.append("cookie_check_on_startup")
+
+        if "cookie_refresh_retry_delay" in data:
+            delay = int(data["cookie_refresh_retry_delay"])
+            if delay < 60:
+                return jsonify({"error": "重试延迟不能小于 60 秒"}), 400
+            if delay > 3600:
+                return jsonify({"error": "重试延迟不能大于 1 小时"}), 400
+            account_manager.config["cookie_refresh_retry_delay"] = delay
+            updated_fields.append("cookie_refresh_retry_delay")
+
+        if updated_fields:
+            account_manager.save_config()
+
+        return jsonify({
+            "success": True,
+            "updated_fields": updated_fields,
+            "config": {
+                "auto_refresh_cookie": account_manager.config.get("auto_refresh_cookie", False),
+                "cookie_check_interval": account_manager.config.get("cookie_check_interval", 900),
+                "cookie_check_on_startup": account_manager.config.get("cookie_check_on_startup", True),
+                "cookie_refresh_retry_delay": account_manager.config.get("cookie_refresh_retry_delay", 300),
+            }
+        })
+
+    @app.route('/api/cookie-check/trigger', methods=['POST'])
+    @require_admin
+    def trigger_cookie_check():
+        """手动触发 Cookie 检测"""
+        from .cookie_refresh import _immediate_refresh_event
+
+        # 检查自动刷新是否启用
+        auto_refresh_enabled = account_manager.config.get("auto_refresh_cookie", False)
+        if not auto_refresh_enabled:
+            return jsonify({
+                "success": False,
+                "error": "自动刷新功能未启用，请先在设置中启用"
+            }), 400
+
+        # 触发立即检测
+        _immediate_refresh_event.set()
+
+        return jsonify({
+            "success": True,
+            "message": "已触发 Cookie 检测，请查看后台日志"
+        })
+

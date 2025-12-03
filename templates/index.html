@@ -150,6 +150,10 @@
                             <svg class="icon"><use xlink:href="#icon-refresh-cw"></use></svg>
                             批量刷新选中 (<span id="selectedCount">0</span>)
                         </button>
+                        <button class="btn btn-outline" onclick="batchTestAccounts()" id="batchTestBtn" disabled title="请先选择要测试的账号">
+                            <svg class="icon"><use xlink:href="#icon-check-circle"></use></svg>
+                            批量测试连接
+                        </button>
                     </div>
                 </div>
                 <div class="table-container">
@@ -295,13 +299,71 @@
                                             <svg class="icon" style="width: 20px; height: 20px; color: var(--primary);"><use xlink:href="#icon-refresh"></use></svg>
                                             <label style="font-size: 16px; font-weight: 600; color: var(--text-main); cursor: pointer; margin: 0;" for="autoRefreshCookie">启用自动刷新 Cookie</label>
                                         </div>
-                                        <small style="display: block; color: var(--text-muted); margin-left: 32px;">启用后，系统将每1小时自动检查并刷新过期的 Cookie（需要安装 Playwright: pip install playwright && playwright install chromium）</small>
+                                        <small style="display: block; color: var(--text-muted); margin-left: 32px;">启用后，系统将定期检查并自动刷新过期的 Cookie</small>
                                     </div>
                                     <label class="toggle-switch" for="autoRefreshCookie" style="position: relative; display: inline-block; width: 56px; height: 32px; cursor: pointer; flex-shrink: 0;">
                                         <input type="checkbox" id="autoRefreshCookie" onchange="toggleAutoRefresh()" style="opacity: 0; width: 0; height: 0;">
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
+
+                                <!-- Cookie 检测配置 -->
+                                <div id="cookieCheckConfig" style="margin-top: 16px; padding: 16px; background: var(--hover-bg); border-radius: var(--radius-md); display: none;">
+                                    <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-main);">检测配置</h4>
+                                    <div class="form-row" style="gap: 16px;">
+                                        <div class="form-group" style="flex: 1;">
+                                            <label class="form-label">检测间隔（分钟）</label>
+                                            <input type="number" class="form-input" id="cookieCheckInterval" min="1" max="1440" value="15" style="width: 100%;">
+                                            <small style="color: var(--text-muted);">默认 15 分钟</small>
+                                        </div>
+                                        <div class="form-group" style="flex: 1;">
+                                            <label class="form-label">刷新失败重试延迟（分钟）</label>
+                                            <input type="number" class="form-input" id="cookieRefreshRetryDelay" min="1" max="60" value="5" style="width: 100%;">
+                                            <small style="color: var(--text-muted);">默认 5 分钟</small>
+                                        </div>
+                                    </div>
+                                    <div class="form-group" style="margin-top: 12px;">
+                                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                            <input type="checkbox" id="cookieCheckOnStartup" checked>
+                                            <span>启动时立即检测</span>
+                                        </label>
+                                    </div>
+                                    <button class="btn btn-outline" onclick="saveCookieCheckConfig()" style="margin-top: 12px;">保存配置</button>
+                                </div>
+
+                                <!-- Cookie 检测状态 -->
+                                <div id="cookieCheckStatus" style="margin-top: 16px; padding: 16px; background: var(--hover-bg); border-radius: var(--radius-md); display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                        <h4 style="margin: 0; font-size: 14px; color: var(--text-main);">检测状态</h4>
+                                        <button class="btn btn-outline btn-sm" onclick="triggerCookieCheck()" id="triggerCheckBtn">
+                                            <svg class="icon" style="width: 14px; height: 14px;"><use xlink:href="#icon-play"></use></svg>
+                                            立即检测
+                                        </button>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 13px;">
+                                        <div>
+                                            <span style="color: var(--text-muted);">运行状态:</span>
+                                            <span id="checkStatusRunning" style="margin-left: 8px;">-</span>
+                                        </div>
+                                        <div>
+                                            <span style="color: var(--text-muted);">检测次数:</span>
+                                            <span id="checkStatusCount" style="margin-left: 8px;">0</span>
+                                        </div>
+                                        <div>
+                                            <span style="color: var(--text-muted);">上次检测:</span>
+                                            <span id="checkStatusLastTime" style="margin-left: 8px;">-</span>
+                                        </div>
+                                        <div>
+                                            <span style="color: var(--text-muted);">下次检测:</span>
+                                            <span id="checkStatusNextTime" style="margin-left: 8px;">-</span>
+                                        </div>
+                                        <div style="grid-column: span 2;">
+                                            <span style="color: var(--text-muted);">最近结果:</span>
+                                            <span id="checkStatusResult" style="margin-left: 8px;">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div id="autoRefreshStatus" style="margin-top: 12px; padding: 12px; background: var(--hover-bg); border-radius: var(--radius-sm); display: none;">
                                     <div style="display: flex; align-items: center; gap: 8px;">
                                         <span id="autoRefreshStatusText"></span>
