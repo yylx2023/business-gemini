@@ -14,9 +14,12 @@
 
 参数：
     --dry-run: 仅预览将要删除的账号，不实际删除
+
+注意：此脚本直接使用 sqlite3 操作数据库，不依赖 SQLAlchemy
 """
 
 import sys
+import sqlite3
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -25,6 +28,9 @@ from datetime import datetime
 project_root = Path(__file__).parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+
+# 数据库文件路径
+DB_FILE = project_root / "geminibusiness.db"
 
 
 def get_account_score(account: dict) -> tuple:
@@ -56,110 +62,103 @@ def get_account_score(account: dict) -> tuple:
 
 
 def cleanup_from_database(dry_run: bool = False):
-    """从数据库清理重复的 team_id 账号"""
-    try:
-        from app.database import SessionLocal, Account
-        
-        db = SessionLocal()
-        try:
-            # 获取所有账号
-            accounts = db.query(Account).order_by(Account.id).all()
-            print(f"\n[扫描] 数据库中共有 {len(accounts)} 个账号")
-            
-            # 按 team_id 分组
-            team_id_groups = defaultdict(list)
-            for acc in accounts:
-                team_id = (acc.team_id or "").strip()
-                if team_id:  # 只处理有 team_id 的账号
-                    team_id_groups[team_id].append({
-                        "id": acc.id,
-                        "team_id": acc.team_id,
-                        "secure_c_ses": acc.secure_c_ses,
-                        "available": acc.available,
-                        "tempmail_url": acc.tempmail_url,
-                        "tempmail_name": acc.tempmail_name,
-                        "cookie_expired": False,  # 数据库没有这个字段
-                    })
-            
-            # 找出重复的 team_id
-            duplicates = {k: v for k, v in team_id_groups.items() if len(v) > 1}
-            
-            if not duplicates:
-                print("\n[结果] 没有发现重复的 team_id，无需清理")
-                return
-            
-            print(f"\n[发现] {len(duplicates)} 组重复的 team_id：")
-            
-            accounts_to_delete = []
-            accounts_to_keep = []
-            
-            for team_id, accounts_list in duplicates.items():
-                print(f"\n  team_id: {team_id}")
-                print(f"    重复数量: {len(accounts_list)}")
-                
-                # 按优先级排序，分数最高的排在最前面
-                accounts_list.sort(key=get_account_score, reverse=True)
-                
-                # 保留第一个（分数最高的）
-                keep = accounts_list[0]
-                delete = accounts_list[1:]
-                
-                accounts_to_keep.append(keep)
-                accounts_to_delete.extend(delete)
-                
-                print(f"    保留: ID={keep['id']}, tempmail={keep.get('tempmail_name', 'N/A')}, "
-                      f"available={keep['available']}, has_cookie={bool(keep.get('secure_c_ses'))}")
-                for d in delete:
-                    print(f"    删除: ID={d['id']}, tempmail={d.get('tempmail_name', 'N/A')}, "
-                          f"available={d['available']}, has_cookie={bool(d.get('secure_c_ses'))}")
-            
-            print(f"\n[汇总]")
-            print(f"  - 将保留: {len(accounts_to_keep)} 个账号")
-            print(f"  - 将删除: {len(accounts_to_delete)} 个账号")
-            
-            if dry_run:
-                print("\n[预览模式] 未实际删除，添加 --execute 参数执行删除")
-                return
-            
-            # 确认删除
-            confirm = input(f"\n确定要删除 {len(accounts_to_delete)} 个重复账号吗？(y/n): ").strip().lower()
-            if confirm != 'y':
-                print("[取消] 未执行删除操作")
-                return
-            
-            # 执行删除
-            deleted_count = 0
-            for acc in accounts_to_delete:
-                try:
-                    db.query(Account).filter(Account.id == acc['id']).delete()
-                    deleted_count += 1
-                    print(f"  ✓ 已删除 ID={acc['id']}")
-                except Exception as e:
-                    print(f"  ✗ 删除 ID={acc['id']} 失败: {e}")
-            
-            db.commit()
-            print(f"\n[完成] 成功删除 {deleted_count} 个重复账号")
-            
-            # 重新加载 account_manager
-            try:
-                from app.account_manager import account_manager
-                account_manager.load_config()
-                print("[刷新] 已重新加载账号管理器")
-            except Exception as e:
-                print(f"[警告] 重新加载账号管理器失败: {e}")
-                print("        请手动重启服务以使更改生效")
-            
-        finally:
-            db.close()
-            
-    except ImportError as e:
-        print(f"[错误] 无法导入数据库模块: {e}")
-        print("        请确保在项目根目录下运行此脚本")
+    """从数据库清理重复的 team_id 账号（使用 sqlite3 直接操作）"""
+
+    if not DB_FILE.exists():
+        print(f"[错误] 数据库文件不存在: {DB_FILE}")
         return
+
+    conn = sqlite3.connect(str(DB_FILE))
+    conn.row_factory = sqlite3.Row  # 使结果可以通过列名访问
+    cursor = conn.cursor()
+
+    try:
+        # 获取所有账号
+        cursor.execute("SELECT * FROM accounts ORDER BY id")
+        accounts = cursor.fetchall()
+        print(f"\n[扫描] 数据库中共有 {len(accounts)} 个账号")
+
+        # 按 team_id 分组
+        team_id_groups = defaultdict(list)
+        for acc in accounts:
+            team_id = (acc["team_id"] or "").strip()
+            if team_id:  # 只处理有 team_id 的账号
+                team_id_groups[team_id].append({
+                    "id": acc["id"],
+                    "team_id": acc["team_id"],
+                    "secure_c_ses": acc["secure_c_ses"],
+                    "available": acc["available"],
+                    "tempmail_url": acc["tempmail_url"],
+                    "tempmail_name": acc["tempmail_name"],
+                    "cookie_expired": False,
+                })
+
+        # 找出重复的 team_id
+        duplicates = {k: v for k, v in team_id_groups.items() if len(v) > 1}
+
+        if not duplicates:
+            print("\n[结果] 没有发现重复的 team_id，无需清理")
+            return
+
+        print(f"\n[发现] {len(duplicates)} 组重复的 team_id：")
+
+        accounts_to_delete = []
+        accounts_to_keep = []
+
+        for team_id, accounts_list in duplicates.items():
+            print(f"\n  team_id: {team_id}")
+            print(f"    重复数量: {len(accounts_list)}")
+
+            # 按优先级排序，分数最高的排在最前面
+            accounts_list.sort(key=get_account_score, reverse=True)
+
+            # 保留第一个（分数最高的）
+            keep = accounts_list[0]
+            delete = accounts_list[1:]
+
+            accounts_to_keep.append(keep)
+            accounts_to_delete.extend(delete)
+
+            print(f"    保留: ID={keep['id']}, tempmail={keep.get('tempmail_name', 'N/A')}, "
+                  f"available={keep['available']}, has_cookie={bool(keep.get('secure_c_ses'))}")
+            for d in delete:
+                print(f"    删除: ID={d['id']}, tempmail={d.get('tempmail_name', 'N/A')}, "
+                      f"available={d['available']}, has_cookie={bool(d.get('secure_c_ses'))}")
+
+        print(f"\n[汇总]")
+        print(f"  - 将保留: {len(accounts_to_keep)} 个账号")
+        print(f"  - 将删除: {len(accounts_to_delete)} 个账号")
+
+        if dry_run:
+            print("\n[预览模式] 未实际删除，不带 --dry-run 参数执行删除")
+            return
+
+        # 确认删除
+        confirm = input(f"\n确定要删除 {len(accounts_to_delete)} 个重复账号吗？(y/n): ").strip().lower()
+        if confirm != 'y':
+            print("[取消] 未执行删除操作")
+            return
+
+        # 执行删除
+        deleted_count = 0
+        for acc in accounts_to_delete:
+            try:
+                cursor.execute("DELETE FROM accounts WHERE id = ?", (acc['id'],))
+                deleted_count += 1
+                print(f"  ✓ 已删除 ID={acc['id']}")
+            except Exception as e:
+                print(f"  ✗ 删除 ID={acc['id']} 失败: {e}")
+
+        conn.commit()
+        print(f"\n[完成] 成功删除 {deleted_count} 个重复账号")
+        print("\n[提示] 请重启服务以使更改生效")
+
     except Exception as e:
         print(f"[错误] 清理失败: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        conn.close()
 
 
 def cleanup_from_json(dry_run: bool = False):

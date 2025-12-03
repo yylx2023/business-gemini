@@ -139,6 +139,7 @@ class AccountManager:
                 self.accounts = []
                 for acc in accounts_db:
                     self.accounts.append({
+                        "_db_id": acc.id,  # 保留数据库 ID，用于后续保存时匹配
                         "team_id": acc.team_id,
                         "secure_c_ses": acc.secure_c_ses,
                         "host_c_oses": acc.host_c_oses,
@@ -284,10 +285,27 @@ class AccountManager:
                         else:
                             db.add(SystemConfig(key=key, value=str(value), value_type=value_type))
                 
-                # 保存账号
+                # 保存账号 - 使用 _db_id 或 team_id 匹配，避免重复创建
                 for i, acc_data in enumerate(self.accounts):
-                    # 通过 ID 查找账号（ID 从 1 开始）
-                    account = db.query(Account).filter(Account.id == i + 1).first()
+                    account = None
+
+                    # 优先使用 _db_id 查找（从数据库加载时保留的 ID）
+                    db_id = acc_data.get("_db_id")
+                    if db_id:
+                        account = db.query(Account).filter(Account.id == db_id).first()
+
+                    # 如果没有 _db_id 或找不到，尝试用 team_id 查找
+                    if not account:
+                        team_id = (acc_data.get("team_id") or "").strip()
+                        if team_id:
+                            account = db.query(Account).filter(Account.team_id == team_id).first()
+
+                    # 如果还是找不到，尝试用 tempmail_name 查找（适用于新注册但还没有 team_id 的账号）
+                    if not account:
+                        tempmail_name = (acc_data.get("tempmail_name") or "").strip()
+                        if tempmail_name:
+                            account = db.query(Account).filter(Account.tempmail_name == tempmail_name).first()
+
                     if account:
                         # 更新现有账号
                         account.team_id = acc_data.get("team_id")
@@ -298,10 +316,9 @@ class AccountManager:
                         account.available = acc_data.get("available", True)
                         account.tempmail_url = acc_data.get("tempmail_url")
                         account.tempmail_name = acc_data.get("tempmail_name")
-                        # 被动检测模式：不再维护配额使用量字段
-                        # 保留字段用于向后兼容，但不再读取或更新
-                        # account.quota_usage = acc_data.get("quota_usage", {})
-                        # account.quota_reset_date = acc_data.get("quota_reset_date")
+                        # 更新内存中的 _db_id（如果之前没有）
+                        if not db_id:
+                            acc_data["_db_id"] = account.id
                     else:
                         # 新建账号
                         account = Account(
@@ -313,11 +330,12 @@ class AccountManager:
                             available=acc_data.get("available", True),
                             tempmail_url=acc_data.get("tempmail_url"),
                             tempmail_name=acc_data.get("tempmail_name"),
-                            # 被动检测模式：不再维护配额使用量字段
-                            quota_usage=None,  # 保留字段用于向后兼容
-                            quota_reset_date=None,  # 保留字段用于向后兼容
+                            quota_usage=None,
+                            quota_reset_date=None,
                         )
                         db.add(account)
+                        db.flush()  # 获取新账号的 ID
+                        acc_data["_db_id"] = account.id  # 保存到内存
                 
                 # 保存模型
                 models = self.config.get("models", [])
