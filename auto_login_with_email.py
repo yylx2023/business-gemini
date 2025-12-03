@@ -2159,8 +2159,23 @@ def save_to_config(cookies_data: Dict[str, str], account_index: Optional[int] = 
                 old_account.pop("cookie_expired", None)
                 old_account.pop("cookie_expired_time", None)
 
+                # 清除冷却时间（Cookie 刷新后应立即恢复可用）
+                old_account.pop("cooldown_until", None)
+
                 # 恢复账号可用状态
                 old_account["available"] = True
+
+                # 同时清除 account_states 中的状态
+                state = account_manager.account_states.get(account_index, {})
+                state["cookie_expired"] = False
+                state["available"] = True
+                state.pop("cooldown_until", None)
+                state.pop("cooldown_reason", None)
+                # 清除 JWT 缓存（因为 Cookie 已更新）
+                state["jwt"] = None
+                state["jwt_time"] = 0
+                state["session"] = None
+                account_manager.account_states[account_index] = state
 
                 account_manager.config["accounts"] = account_manager.accounts
                 account_manager.save_config()
