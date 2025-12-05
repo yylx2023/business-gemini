@@ -251,7 +251,16 @@ class DrissionPageWorker:
             if path_match:
                 config_id = path_match.group(1)
 
+            # 调试日志：打印提取到的各个值
+            print(f"[DEBUG] 提取结果:")
+            print(f"[DEBUG]   - __Secure-C_SES: {'有值(' + str(len(c_ses)) + '字符)' if c_ses else '空'}")
+            print(f"[DEBUG]   - __Host-C_OSES: {'有值(' + str(len(c_oses)) + '字符)' if c_oses else '空'}")
+            print(f"[DEBUG]   - csesidx: {csesidx if csesidx else '空'}")
+            print(f"[DEBUG]   - team_id: {config_id if config_id else '空'}")
+            print(f"[DEBUG]   - 当前URL: {current_url}")
+
             if c_ses and csesidx:
+                print(f"[DEBUG] ✓ 提取成功，数据完整")
                 return {
                     "secure_c_ses": c_ses,
                     "host_c_oses": c_oses,
@@ -259,6 +268,7 @@ class DrissionPageWorker:
                     "team_id": config_id,
                 }
 
+            print(f"[DEBUG] ✗ 提取失败，缺少必要字段: c_ses={bool(c_ses)}, csesidx={bool(csesidx)}")
             return None
 
         except Exception as e:
@@ -421,6 +431,11 @@ class DrissionPageWorker:
             while waited < max_wait:
                 # 检查是否已经跳转到目标页面（已注册账号）
                 current_url = self.page.url
+
+                # 调试日志：每5秒打印一次当前 URL
+                if waited % 5 == 0:
+                    print(f"[DEBUG] 等待中({waited}s)，当前 URL: {current_url[:100]}...")
+
                 if re.search(target_pattern, current_url):
                     already_logged_in = True
                     print(f"[{'注册' if is_new else '刷新'}] ✓ 账号已注册，直接跳转到主页")
@@ -432,6 +447,7 @@ class DrissionPageWorker:
                         ele = self.page.ele(selector, timeout=1)
                         if ele:
                             name_input_found = True
+                            print(f"[DEBUG] 检测到姓名输入框: {selector}")
                             break
                     except:
                         pass
@@ -441,6 +457,9 @@ class DrissionPageWorker:
 
                 time.sleep(1)
                 waited += 1
+
+            # 调试日志：循环结束状态
+            print(f"[DEBUG] 检测结束: name_input_found={name_input_found}, already_logged_in={already_logged_in}, 当前URL: {self.page.url[:100]}...")
 
             # 如果找到姓名输入框，说明是新账号，需要完成注册流程
             if name_input_found and not already_logged_in:
@@ -490,9 +509,26 @@ class DrissionPageWorker:
             elif not already_logged_in:
                 # 既没有姓名输入框，也没有跳转到目标页面，尝试等待跳转
                 print(f"[{'注册' if is_new else '刷新'}] 等待页面跳转（可能是已注册账号）...")
+                print(f"[DEBUG] 目标 URL 模式: {target_pattern}")
                 if not self.wait_for_url_pattern(target_pattern, timeout=60):
                     # 最后尝试直接提取 Cookie
+                    current_url = self.page.url
+                    print(f"[DEBUG] 跳转超时，当前 URL: {current_url}")
                     print(f"[{'注册' if is_new else '刷新'}] 尝试直接提取 Cookie...")
+
+                    # 尝试保存截图用于调试
+                    try:
+                        screenshot_path = f"/tmp/refresh_failed_{int(time.time())}.png"
+                        self.page.get_screenshot(path=screenshot_path)
+                        print(f"[DEBUG] 已保存截图: {screenshot_path}")
+                    except Exception as e:
+                        print(f"[DEBUG] 保存截图失败: {e}")
+
+                    # 打印页面标题
+                    try:
+                        print(f"[DEBUG] 页面标题: {self.page.title}")
+                    except:
+                        pass
 
             time.sleep(3)
 
