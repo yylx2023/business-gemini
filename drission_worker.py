@@ -7,7 +7,6 @@ DrissionPage 浏览器自动化工作器
 import re
 import time
 import random
-import logging
 from typing import Optional, Dict
 from urllib.parse import urlparse, parse_qs
 
@@ -16,9 +15,6 @@ from DrissionPage import Chromium, ChromiumOptions
 # 导入验证码获取函数
 from app.tempmail_api import get_verification_code_from_api
 from auto_login_with_email import extract_verification_code, save_to_config
-
-# 配置日志
-logger = logging.getLogger("business_gemini_pool")
 
 
 class DrissionPageWorker:
@@ -36,27 +32,45 @@ class DrissionPageWorker:
 
             options = ChromiumOptions().auto_port()
 
-            # 设置 User-Agent
-            ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            # 设置更真实的 User-Agent（服务器常用 Linux）
+            ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             options.set_user_agent(ua)
 
             if self.headless:
-                options.set_argument('--headless=new')
+                # 使用普通 headless 模式
+                options.set_argument('--headless')
+                # 设置虚拟屏幕大小
+                options.set_argument('--window-size=1920,1080')
+                options.set_argument('--start-maximized')
 
-            # 反检测参数
+            # 核心反检测参数
             options.set_argument('--disable-blink-features=AutomationControlled')
             options.set_argument('--no-sandbox')
             options.set_argument('--disable-dev-shm-usage')
             options.set_argument('--disable-gpu')
-            options.set_argument('--lang=zh-CN')
-            options.set_argument('--disable-web-security')
-            options.set_argument('--window-size=1920,1080')
+            options.set_argument('--lang=zh-CN,zh,en-US,en')
 
+            # 更多反检测参数
+            options.set_argument('--disable-infobars')
+            options.set_argument('--disable-popup-blocking')
+            options.set_argument('--ignore-certificate-errors')
+
+            # 关键：排除自动化标志
+            options.set_argument('--disable-automation')
+            options.set_argument('--disable-extensions')
+
+            # 首选项设置
             options.set_pref('credentials_enable_service', False)
             options.set_pref('profile.password_manager_enabled', False)
+            options.set_pref('profile.default_content_setting_values.notifications', 2)
+            options.set_pref('excludeSwitches', ['enable-automation'])
+            options.set_pref('useAutomationExtension', False)
 
             self.browser = Chromium(options)
             self.page = self.browser.latest_tab
+
+            # 使用 CDP 命令增强反检测
+            self._apply_stealth_cdp()
 
             # 注入反检测脚本
             self._inject_fingerprint_script()
@@ -67,13 +81,102 @@ class DrissionPageWorker:
             print(f"[浏览器] ✗ 创建浏览器失败: {e}")
             return False
 
+    def _apply_stealth_cdp(self):
+        """使用 CDP 命令增强反检测"""
+        try:
+            # 通过 CDP 隐藏 webdriver
+            self.page.run_cdp('Page.addScriptToEvaluateOnNewDocument', source='''
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            ''')
+
+            # 设置 User-Agent 相关属性
+            self.page.run_cdp('Emulation.setUserAgentOverride',
+                userAgent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                platform="Linux",
+                acceptLanguage="zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+            )
+        except Exception as e:
+            print(f"[浏览器] CDP 命令执行警告: {e}")
+
     def _inject_fingerprint_script(self):
-        """注入指纹混淆脚本"""
+        """注入指纹混淆脚本 - 增强版"""
         script = '''
+        // ========== 核心：隐藏 webdriver ==========
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-        window.chrome = { runtime: {} };
+        if (navigator.__proto__) {
+            delete navigator.__proto__.webdriver;
+        }
+
+        // ========== 模拟真实的 plugins ==========
+        const makePluginArray = () => {
+            const plugins = [
+                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 }
+            ];
+            plugins.item = (i) => plugins[i] || null;
+            plugins.namedItem = (name) => plugins.find(p => p.name === name) || null;
+            plugins.refresh = () => {};
+            return plugins;
+        };
+        Object.defineProperty(navigator, 'plugins', { get: () => makePluginArray() });
+
+        // ========== 语言设置 ==========
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+        Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
+
+        // ========== 模拟 chrome 对象 ==========
+        window.chrome = {
+            app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+            runtime: { OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' }, OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }, PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' }, RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' }, connect: function() {}, sendMessage: function() {}, id: undefined },
+            loadTimes: function() { return { requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000, commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000, finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: false, wasNpnNegotiated: false, npnNegotiatedProtocol: 'unknown', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' }; },
+            csi: function() { return { pageT: Date.now(), onloadT: Date.now(), startE: Date.now(), tran: 15 }; }
+        };
+
+        // ========== 权限查询修复 ==========
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+
+        // ========== 模拟网络连接 ==========
+        Object.defineProperty(navigator, 'connection', {
+            get: () => ({
+                effectiveType: '4g',
+                rtt: 100,
+                downlink: 10,
+                saveData: false,
+                onchange: null
+            })
+        });
+
+        // ========== 隐藏 headless 特征 ==========
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+        Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
+        Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+
+        // ========== WebGL 指纹 ==========
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Intel Inc.';
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+            return getParameter.call(this, parameter);
+        };
+
+        // ========== 屏幕分辨率 ==========
+        Object.defineProperty(screen, 'width', { get: () => 1920 });
+        Object.defineProperty(screen, 'height', { get: () => 1080 });
+        Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+        Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+        // ========== 时区 ==========
+        Date.prototype.getTimezoneOffset = function() { return -480; }; // UTC+8
         '''
         try:
             self.page.run_js(script)
@@ -91,7 +194,7 @@ class DrissionPageWorker:
                 self.browser = None
                 self.page = None
 
-    def safe_input(self, selector: str, text: str, max_retries: int = 3) -> bool:
+    def safe_input(self, selector: str, text: str, max_retries: int = 3, human_like: bool = True) -> bool:
         """安全输入文本"""
         for attempt in range(max_retries):
             try:
@@ -99,11 +202,25 @@ class DrissionPageWorker:
                 if not ele:
                     continue
 
+                # 先点击输入框
+                if human_like:
+                    time.sleep(random.uniform(0.2, 0.5))
+                    ele.click()
+                    time.sleep(random.uniform(0.1, 0.3))
+
                 ele.clear()
-                time.sleep(0.3)
+                time.sleep(random.uniform(0.2, 0.4) if human_like else 0.3)
                 clean_text = ''.join(c for c in text if ord(c) < 128)
-                ele.input(clean_text)
-                time.sleep(0.5)
+
+                if human_like:
+                    # 逐字符输入，模拟人类打字
+                    for char in clean_text:
+                        ele.input(char, clear=False)
+                        time.sleep(random.uniform(0.05, 0.15))  # 随机打字间隔
+                else:
+                    ele.input(clean_text)
+
+                time.sleep(random.uniform(0.3, 0.6) if human_like else 0.5)
 
                 input_value = ele.attr('value') or ele.value
                 if input_value and clean_text in input_value:
@@ -118,12 +235,21 @@ class DrissionPageWorker:
 
         return False
 
-    def wait_and_click(self, selector: str, timeout: float = 10) -> bool:
+    def wait_and_click(self, selector: str, timeout: float = 10, human_like: bool = True) -> bool:
         """等待并点击元素"""
         try:
             ele = self.page.ele(selector, timeout=timeout)
             if ele:
-                ele.click()
+                if human_like:
+                    # 添加随机延迟，模拟人类反应时间
+                    time.sleep(random.uniform(0.3, 0.8))
+                    # 尝试使用 actions 模拟更自然的点击
+                    try:
+                        ele.click.left()  # DrissionPage 的点击方式
+                    except:
+                        ele.click()
+                else:
+                    ele.click()
                 return True
             return False
         except Exception as e:
@@ -256,15 +382,15 @@ class DrissionPageWorker:
                 config_id = path_match.group(1)
 
             # 调试日志：打印提取到的各个值
-            logger.info(f"[DEBUG] 提取结果:")
-            logger.info(f"[DEBUG]   - __Secure-C_SES: {'有值(' + str(len(c_ses)) + '字符)' if c_ses else '空'}")
-            logger.info(f"[DEBUG]   - __Host-C_OSES: {'有值(' + str(len(c_oses)) + '字符)' if c_oses else '空'}")
-            logger.info(f"[DEBUG]   - csesidx: {csesidx if csesidx else '空'}")
-            logger.info(f"[DEBUG]   - team_id: {config_id if config_id else '空'}")
-            logger.info(f"[DEBUG]   - 当前URL: {current_url}")
+            print(f"[提取] [DEBUG] 提取结果:")
+            print(f"[提取] [DEBUG]   - __Secure-C_SES: {'有值(' + str(len(c_ses)) + '字符)' if c_ses else '空'}")
+            print(f"[提取] [DEBUG]   - __Host-C_OSES: {'有值(' + str(len(c_oses)) + '字符)' if c_oses else '空'}")
+            print(f"[提取] [DEBUG]   - csesidx: {csesidx if csesidx else '空'}")
+            print(f"[提取] [DEBUG]   - team_id: {config_id if config_id else '空'}")
+            print(f"[提取] [DEBUG]   - 当前URL: {current_url}")
 
             if c_ses and csesidx:
-                logger.info(f"[DEBUG] ✓ 提取成功，数据完整")
+                print(f"[提取] [DEBUG] ✓ 提取成功，数据完整")
                 return {
                     "secure_c_ses": c_ses,
                     "host_c_oses": c_oses,
@@ -272,7 +398,7 @@ class DrissionPageWorker:
                     "team_id": config_id,
                 }
 
-            logger.info(f"[DEBUG] ✗ 提取失败，缺少必要字段: c_ses={bool(c_ses)}, csesidx={bool(csesidx)}")
+            print(f"[提取] [DEBUG] ✗ 提取失败，缺少必要字段: c_ses={bool(c_ses)}, csesidx={bool(csesidx)}")
             return None
 
         except Exception as e:
@@ -438,7 +564,7 @@ class DrissionPageWorker:
 
                 # 调试日志：每5秒打印一次当前 URL
                 if waited % 5 == 0:
-                    logger.info(f"[DEBUG] 等待中({waited}s)，当前 URL: {current_url[:100]}...")
+                    print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 等待中({waited}s)，当前 URL: {current_url[:100]}...")
 
                 if re.search(target_pattern, current_url):
                     already_logged_in = True
@@ -451,7 +577,7 @@ class DrissionPageWorker:
                         ele = self.page.ele(selector, timeout=1)
                         if ele:
                             name_input_found = True
-                            logger.info(f"[DEBUG] 检测到姓名输入框: {selector}")
+                            print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 检测到姓名输入框: {selector}")
                             break
                     except:
                         pass
@@ -463,7 +589,7 @@ class DrissionPageWorker:
                 waited += 1
 
             # 调试日志：循环结束状态
-            logger.info(f"[DEBUG] 检测结束: name_input_found={name_input_found}, already_logged_in={already_logged_in}, 当前URL: {self.page.url[:100]}...")
+            print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 检测结束: name_input_found={name_input_found}, already_logged_in={already_logged_in}, 当前URL: {self.page.url[:100]}...")
 
             # 如果找到姓名输入框，说明是新账号，需要完成注册流程
             if name_input_found and not already_logged_in:
@@ -513,24 +639,24 @@ class DrissionPageWorker:
             elif not already_logged_in:
                 # 既没有姓名输入框，也没有跳转到目标页面，尝试等待跳转
                 print(f"[{'注册' if is_new else '刷新'}] 等待页面跳转（可能是已注册账号）...")
-                logger.info(f"[DEBUG] 目标 URL 模式: {target_pattern}")
+                print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 目标 URL 模式: {target_pattern}")
                 if not self.wait_for_url_pattern(target_pattern, timeout=60):
                     # 最后尝试直接提取 Cookie
                     current_url = self.page.url
-                    logger.info(f"[DEBUG] 跳转超时，当前 URL: {current_url}")
+                    print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 跳转超时，当前 URL: {current_url}")
                     print(f"[{'注册' if is_new else '刷新'}] 尝试直接提取 Cookie...")
 
                     # 尝试保存截图用于调试
                     try:
                         screenshot_path = f"/tmp/refresh_failed_{int(time.time())}.png"
                         self.page.get_screenshot(path=screenshot_path)
-                        logger.info(f"[DEBUG] 已保存截图: {screenshot_path}")
+                        print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 已保存截图: {screenshot_path}")
                     except Exception as e:
-                        logger.info(f"[DEBUG] 保存截图失败: {e}")
+                        print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 保存截图失败: {e}")
 
                     # 打印页面标题
                     try:
-                        logger.info(f"[DEBUG] 页面标题: {self.page.title}")
+                        print(f"[{'注册' if is_new else '刷新'}] [DEBUG] 页面标题: {self.page.title}")
                     except:
                         pass
 
